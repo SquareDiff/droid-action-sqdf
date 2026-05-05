@@ -9,7 +9,10 @@ import { prepareMcpTools } from "../../mcp/install-mcp-server";
 import { normalizeDroidArgs, parseAllowedTools } from "../../utils/parse-tools";
 import type { PrepareResult } from "../../prepare/types";
 import { generateReviewValidatorPrompt } from "../../create-prompt/templates/review-validator-prompt";
-import { resolveReviewConfig } from "../../utils/review-depth";
+import {
+  resolveReviewConfig,
+  resolveCodeReviewExecProfileFromEnv,
+} from "../../utils/review-depth";
 
 export async function prepareReviewValidatorMode({
   context,
@@ -60,6 +63,7 @@ export async function prepareReviewValidatorMode({
     generatePrompt: generateReviewValidatorPrompt,
     reviewArtifacts,
     includeSuggestions,
+    droidExecProfile: resolveCodeReviewExecProfileFromEnv(),
   });
 
   core.exportVariable("DROID_EXEC_RUN_TYPE", "droid-review");

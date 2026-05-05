@@ -1,4 +1,5 @@
 import type { GitHubContext } from "../github/context";
+import type { ReviewExecProfile } from "../utils/review-depth";
 
 export type CommonFields = {
   repository: string;
@@ -119,4 +120,6 @@ export type PreparedContext = CommonFields & {
   reviewArtifacts?: ReviewArtifacts;
   outputFilePath?: string;
   includeSuggestions?: boolean;
+  /** Populated so prompts can disclose the effective Droid CLI model / reasoning settings. */
+  droidExecProfile?: ReviewExecProfile;
 };

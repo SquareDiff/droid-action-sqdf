@@ -21,6 +21,7 @@ import type {
   EventData,
   ReviewArtifacts,
 } from "./types";
+import type { ReviewExecProfile } from "../utils/review-depth";
 
 export type { CommonFields, PreparedContext, ReviewArtifacts } from "./types";
 
@@ -305,6 +306,8 @@ export type PromptCreationOptions = {
   reviewArtifacts?: ReviewArtifacts;
   outputFilePath?: string;
   includeSuggestions?: boolean;
+  /** When set, review prompts disclose this instead of re-reading process.env. */
+  droidExecProfile?: ReviewExecProfile;
 };
 
 export async function createPrompt({
@@ -320,6 +323,7 @@ export async function createPrompt({
   reviewArtifacts,
   outputFilePath,
   includeSuggestions,
+  droidExecProfile,
 }: PromptCreationOptions) {
   try {
     const droidCommentId = commentId?.toString();
@@ -338,6 +342,10 @@ export async function createPrompt({
 
     if (includeSuggestions !== undefined) {
       preparedContext.includeSuggestions = includeSuggestions;
+    }
+
+    if (droidExecProfile) {
+      preparedContext.droidExecProfile = droidExecProfile;
     }
 
     await mkdir(`${process.env.RUNNER_TEMP || "/tmp"}/droid-prompts`, {

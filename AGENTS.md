@@ -19,17 +19,20 @@ This fork (since `feat/skill-override`) inlines the review methodology directly
 into the prompt, so the skill we ship in this branch is exactly what Droid
 sees:
 
-| File | Role |
-|---|---|
-| `src/create-prompt/templates/review-skill.md` | The review methodology, byte-identical to the harness repo's `skills/review.SKILL.md` |
-| `src/create-prompt/templates/load-review-skill.ts` | Reads the `.md` at module-init, strips YAML frontmatter, prepends the `<!-- SKILL_OVERRIDE_v1 -->` sentinel, caches the result |
-| `src/create-prompt/templates/review-candidates-prompt.ts` | Inlines the loaded skill via `<review_skill>...</review_skill>` and instructs Droid to follow Pass 1 |
-| `src/create-prompt/templates/review-validator-prompt.ts` | Same, but Pass 2 |
+| File                                                      | Role                                                                                                                                                  |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/create-prompt/templates/review-skill.md`             | The review methodology, byte-identical to the harness repo's `skills/review.SKILL.md`                                                                 |
+| `src/create-prompt/templates/load-review-skill.ts`        | Reads the `.md` at module-init, strips YAML frontmatter, prepends the `<!-- SKILL_OVERRIDE_v1 -->` sentinel, caches the result                        |
+| `src/create-prompt/templates/review-candidates-prompt.ts` | Inlines the loaded skill via `<review_skill>...</review_skill>`, prepends `<droid_exec_parameters>`, instructs Pass 1                                 |
+| `src/create-prompt/templates/review-validator-prompt.ts`  | Same, but Pass 2                                                                                                                                      |
+| `src/create-prompt/templates/droid-exec-parameters.ts`    | Builds `<droid_exec_parameters>` so Droid sees the same model / reasoning / depth inputs as the CLI (`grep DROID_EXEC_PARAMETERS_v1` in Actions logs) |
 
 The sentinel `SKILL_OVERRIDE_v1` is grep-able in the GitHub Actions log of any
-Droid run — that's how we verify the override is in effect rather than the
-upstream codepath. If a future log doesn't contain that string, the override
-silently regressed and runs are evaluating Factory's built-in skill instead.
+Droid run using this fork — that's how we verify the override is in effect rather than the
+upstream codepath. The companion sentinel `DROID_EXEC_PARAMETERS_v1` confirms the
+effective review model (--model), reasoning effort, and workflow `review_depth` were inlined
+into the prompt. If either string is missing in the log excerpt of the rendered prompt,
+the fork's review path silently regressed.
 
 ### Hill-climbing workflow
 

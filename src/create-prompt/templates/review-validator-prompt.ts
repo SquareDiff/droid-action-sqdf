@@ -1,5 +1,7 @@
 import type { PreparedContext } from "../types";
+import { resolveCodeReviewExecProfileFromEnv } from "../../utils/review-depth";
 import { getReviewSkill } from "./load-review-skill";
+import { formatDroidExecParametersBlock } from "./droid-exec-parameters";
 
 export function generateReviewValidatorPrompt(
   context: PreparedContext,
@@ -39,9 +41,15 @@ export function generateReviewValidatorPrompt(
 
   const skillInstruction = `<review_skill>\n${getReviewSkill()}\n</review_skill>\n\n${passInstruction}`;
 
+  const execProfile =
+    context.droidExecProfile ?? resolveCodeReviewExecProfileFromEnv();
+  const droidExecBlock = formatDroidExecParametersBlock(execProfile);
+
   return `You are validating candidate review comments for PR #${prNumber} in ${repoFullName}.
 
 IMPORTANT: This is Phase 2 (validator) of a two-pass review pipeline.
+
+${droidExecBlock}
 
 ${skillInstruction}
 

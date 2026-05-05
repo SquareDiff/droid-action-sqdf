@@ -11,7 +11,10 @@ import { isEntityContext } from "../../github/context";
 import { generateReviewCandidatesPrompt } from "../../create-prompt/templates/review-candidates-prompt";
 import type { Octokits } from "../../github/api/client";
 import type { PrepareResult } from "../../prepare/types";
-import { resolveReviewConfig } from "../../utils/review-depth";
+import {
+  resolveReviewConfig,
+  resolveCodeReviewExecProfileFromEnv,
+} from "../../utils/review-depth";
 
 type ReviewCommandOptions = {
   context: GitHubContext;
@@ -99,6 +102,7 @@ export async function prepareReviewMode({
     generatePrompt: generateReviewCandidatesPrompt,
     reviewArtifacts,
     includeSuggestions,
+    droidExecProfile: resolveCodeReviewExecProfileFromEnv(),
   });
   core.exportVariable("DROID_EXEC_RUN_TYPE", "droid-review");
 

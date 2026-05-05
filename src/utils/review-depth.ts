@@ -39,3 +39,27 @@ export function resolveReviewConfig(options?: {
     reasoningEffort: options?.reasoningEffort || defaults.reasoningEffort,
   };
 }
+
+/** Effective Droid CLI profile for code review (matches `--model` / `--reasoning-effort`). */
+export type ReviewExecProfile = {
+  model: string;
+  reasoningEffort: string | undefined;
+  /** Raw `REVIEW_DEPTH` workflow input (e.g. `deep`, `shallow`). */
+  reviewDepth: string;
+};
+
+/**
+ * Read the same env vars the review command uses to build `droid` CLI args.
+ * Callers inline this into prompts so the model knows which configuration it is running under.
+ */
+export function resolveCodeReviewExecProfileFromEnv(): ReviewExecProfile {
+  const reviewDepth = process.env.REVIEW_DEPTH?.trim() || ReviewDepth.Deep;
+
+  const { model, reasoningEffort } = resolveReviewConfig({
+    reviewModel: process.env.REVIEW_MODEL?.trim(),
+    reasoningEffort: process.env.REASONING_EFFORT?.trim(),
+    reviewDepth,
+  });
+
+  return { model, reasoningEffort, reviewDepth };
+}

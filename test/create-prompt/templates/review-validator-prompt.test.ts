@@ -60,6 +60,31 @@ describe("generateReviewValidatorPrompt", () => {
     expect(prompt).toContain("Reporting Gate");
   });
 
+  it("discloses effective Droid CLI exec parameters", () => {
+    const context = createBaseContext();
+
+    const prompt = generateReviewValidatorPrompt(context);
+
+    expect(prompt).toContain("DROID_EXEC_PARAMETERS_v1");
+    expect(prompt).toContain("<droid_exec_parameters>");
+    expect(prompt).toContain("gpt-5.2");
+  });
+
+  it("respects explicit droidExecProfile on context", () => {
+    const context = createBaseContext({
+      droidExecProfile: {
+        model: "custom-validator-model",
+        reasoningEffort: undefined,
+        reviewDepth: "deep",
+      },
+    });
+
+    const prompt = generateReviewValidatorPrompt(context);
+
+    expect(prompt).toContain("custom-validator-model");
+    expect(prompt).toContain("depth preset");
+  });
+
   it("preserves validating candidate review comments framing", () => {
     const context = createBaseContext();
 

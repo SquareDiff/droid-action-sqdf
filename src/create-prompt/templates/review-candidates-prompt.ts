@@ -1,5 +1,7 @@
 import type { PreparedContext } from "../types";
+import { resolveCodeReviewExecProfileFromEnv } from "../../utils/review-depth";
 import { getReviewSkill } from "./load-review-skill";
+import { formatDroidExecParametersBlock } from "./droid-exec-parameters";
 
 export function generateReviewCandidatesPrompt(
   context: PreparedContext,
@@ -46,6 +48,10 @@ export function generateReviewCandidatesPrompt(
 
   const skillInstruction = `<review_skill>\n${getReviewSkill()}\n</review_skill>\n\n${passInstruction}`;
 
+  const execProfile =
+    context.droidExecProfile ?? resolveCodeReviewExecProfileFromEnv();
+  const droidExecBlock = formatDroidExecParametersBlock(execProfile);
+
   const securityReviewEnabled = process.env.SECURITY_REVIEW_ENABLED === "true";
 
   const securitySubagentInstruction = securityReviewEnabled
@@ -70,6 +76,8 @@ After all subagents complete (both code review and security-reviewer), merge the
   return `You are a senior staff software engineer and expert code reviewer.
 
 Your task: Review PR #${prNumber} in ${repoFullName} and generate a JSON file with **high-confidence, actionable** review comments that pinpoint genuine issues.
+
+${droidExecBlock}
 
 ${skillInstruction}${securitySubagentInstruction}
 

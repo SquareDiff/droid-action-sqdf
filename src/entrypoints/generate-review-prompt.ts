@@ -15,7 +15,10 @@ import { prepareMcpTools } from "../mcp/install-mcp-server";
 import { generateReviewCandidatesPrompt } from "../create-prompt/templates/review-candidates-prompt";
 import { generateSecurityCandidatesPrompt } from "../create-prompt/templates/security-review-prompt";
 import { normalizeDroidArgs, parseAllowedTools } from "../utils/parse-tools";
-import { resolveReviewConfig } from "../utils/review-depth";
+import {
+  resolveReviewConfig,
+  resolveCodeReviewExecProfileFromEnv,
+} from "../utils/review-depth";
 
 async function run() {
   try {
@@ -111,6 +114,9 @@ async function run() {
       reviewArtifacts,
       outputFilePath,
       includeSuggestions,
+      ...(reviewType !== "security"
+        ? { droidExecProfile: resolveCodeReviewExecProfileFromEnv() }
+        : {}),
     });
 
     // Set run type

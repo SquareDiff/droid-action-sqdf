@@ -67,6 +67,37 @@ describe("generateReviewCandidatesPrompt", () => {
     expect(prompt).toContain("Reporting Gate");
   });
 
+  it("discloses effective Droid CLI exec parameters", () => {
+    const context = createBaseContext();
+
+    const prompt = generateReviewCandidatesPrompt(context);
+
+    expect(prompt).toContain("DROID_EXEC_PARAMETERS_v1");
+    expect(prompt).toContain("<droid_exec_parameters>");
+    expect(prompt).toContain("CLI model (`--model`):");
+    expect(prompt).toContain("gpt-5.2");
+    expect(prompt).toContain("--reasoning-effort");
+    expect(prompt).toContain("high");
+    expect(prompt).toContain("`deep`");
+  });
+
+  it("respects explicit droidExecProfile on context", () => {
+    const context = createBaseContext({
+      droidExecProfile: {
+        model: "claude-sonnet-4-test",
+        reasoningEffort: "medium",
+        reviewDepth: "shallow",
+      },
+    });
+
+    const prompt = generateReviewCandidatesPrompt(context);
+
+    expect(prompt).toContain("claude-sonnet-4-test");
+    expect(prompt).toContain("`medium`");
+    expect(prompt).toContain("`shallow`");
+    expect(prompt).not.toContain("`gpt-5.2`");
+  });
+
   it("includes senior engineer framing", () => {
     const context = createBaseContext();
 
