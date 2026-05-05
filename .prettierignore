@@ -1,2 +1,6 @@
 # Test fixtures should not be formatted to preserve exact output matching
 test/fixtures/
+
+# Skill prompts are kept byte-identical to the harness repo (skills/review.SKILL.md)
+# so that the sync script (harness/sync_skill.py) is idempotent.
+src/create-prompt/templates/review-skill.md

@@ -2,6 +2,52 @@
 
 This file provides guidance to Factory Droid Exec when working with code in this repository.
 
+> **SquareDiff fork note**: this is `SquareDiff/droid-action-sqdf`, a fork of
+> `Factory-AI/droid-action`. The `dev` and `main` branches mirror upstream.
+> Hill-climbing branches (`feat/*`, `candidate/*`) carry SquareDiff-specific
+> modifications — most importantly the **inline review skill override**
+> introduced on `feat/skill-override`. See "SquareDiff: skill override" below.
+
+## SquareDiff: skill override
+
+Upstream droid-action tells Droid to `"Invoke the 'review' skill"` — a name
+lookup that resolves to Factory's private skill registry inside the Droid CLI.
+That works for production reviews but blocks SquareDiff's hill-climbing loop:
+edits to a local `.md` file have no effect on what Droid actually receives.
+
+This fork (since `feat/skill-override`) inlines the review methodology directly
+into the prompt, so the skill we ship in this branch is exactly what Droid
+sees:
+
+| File | Role |
+|---|---|
+| `src/create-prompt/templates/review-skill.md` | The review methodology, byte-identical to the harness repo's `skills/review.SKILL.md` |
+| `src/create-prompt/templates/load-review-skill.ts` | Reads the `.md` at module-init, strips YAML frontmatter, prepends the `<!-- SKILL_OVERRIDE_v1 -->` sentinel, caches the result |
+| `src/create-prompt/templates/review-candidates-prompt.ts` | Inlines the loaded skill via `<review_skill>...</review_skill>` and instructs Droid to follow Pass 1 |
+| `src/create-prompt/templates/review-validator-prompt.ts` | Same, but Pass 2 |
+
+The sentinel `SKILL_OVERRIDE_v1` is grep-able in the GitHub Actions log of any
+Droid run — that's how we verify the override is in effect rather than the
+upstream codepath. If a future log doesn't contain that string, the override
+silently regressed and runs are evaluating Factory's built-in skill instead.
+
+### Hill-climbing workflow
+
+To test a new skill candidate:
+
+1. In the harness repo: edit `skills/review.SKILL.md`
+2. Run `python3 harness/sync_skill.py` (copies it into this repo's
+   `src/create-prompt/templates/review-skill.md`)
+3. In this repo: `git checkout -b candidate/<version>-<desc>` and commit the
+   updated `review-skill.md`
+4. `bun test && bun run typecheck && bun run format:check`
+5. Push the candidate branch
+6. In the harness repo: update `DROID_ACTION_REF` in `harness/patch_repos.py`
+   (or pass `--ref` flag) and re-patch the eval repos
+
+`review-skill.md` is in `.prettierignore` so the sync stays byte-identical to
+the harness source of truth.
+
 ## Development Tools
 
 - Runtime: Bun 1.2.11
