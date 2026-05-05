@@ -48,13 +48,16 @@ describe("generateReviewValidatorPrompt", () => {
     expect(prompt).toContain("pr_description.txt");
   });
 
-  it("instructs to invoke the review skill for Pass 2", () => {
+  it("inlines the review skill content and references Pass 2", () => {
     const context = createBaseContext();
 
     const prompt = generateReviewValidatorPrompt(context);
 
-    expect(prompt).toContain("Invoke the 'review' skill");
+    expect(prompt).toContain("SKILL_OVERRIDE_v1");
+    expect(prompt).toContain("<review_skill>");
+    expect(prompt).toContain("</review_skill>");
     expect(prompt).toContain("Pass 2: Validation");
+    expect(prompt).toContain("Reporting Gate");
   });
 
   it("preserves validating candidate review comments framing", () => {

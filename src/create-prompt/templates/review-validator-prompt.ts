@@ -1,4 +1,5 @@
 import type { PreparedContext } from "../types";
+import { getReviewSkill } from "./load-review-skill";
 
 export function generateReviewValidatorPrompt(
   context: PreparedContext,
@@ -32,9 +33,11 @@ export function generateReviewValidatorPrompt(
 
   const includeSuggestions = context.includeSuggestions !== false;
 
-  const skillInstruction = includeSuggestions
-    ? "Invoke the 'review' skill to load the review methodology, then execute its **Pass 2: Validation** procedure — including suggestion block rules."
-    : "Invoke the 'review' skill to load the review methodology, then execute its **Pass 2: Validation** procedure. Do NOT include code suggestion blocks.";
+  const passInstruction = includeSuggestions
+    ? "Follow the review methodology above and execute its **Pass 2: Validation** procedure — including suggestion block rules."
+    : "Follow the review methodology above and execute its **Pass 2: Validation** procedure. Do NOT include code suggestion blocks.";
+
+  const skillInstruction = `<review_skill>\n${getReviewSkill()}\n</review_skill>\n\n${passInstruction}`;
 
   return `You are validating candidate review comments for PR #${prNumber} in ${repoFullName}.
 

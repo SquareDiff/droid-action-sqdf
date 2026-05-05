@@ -1,4 +1,5 @@
 import type { PreparedContext } from "../types";
+import { getReviewSkill } from "./load-review-skill";
 
 export function generateReviewCandidatesPrompt(
   context: PreparedContext,
@@ -39,9 +40,11 @@ export function generateReviewCandidatesPrompt(
       "    If you include a suggestion block, choose a RIGHT-side anchor and keep it unchanged so the validator can reuse it."
     : '  - `side`: "RIGHT" for new/modified code (default), "LEFT" only for removed code';
 
-  const skillInstruction = includeSuggestions
-    ? "Invoke the 'review' skill to load the review methodology, then execute its **Pass 1: Candidate Generation** procedure — including suggestion block rules."
-    : "Invoke the 'review' skill to load the review methodology, then execute its **Pass 1: Candidate Generation** procedure. Do NOT include code suggestion blocks.";
+  const passInstruction = includeSuggestions
+    ? "Follow the review methodology above and execute its **Pass 1: Candidate Generation** procedure — including suggestion block rules."
+    : "Follow the review methodology above and execute its **Pass 1: Candidate Generation** procedure. Do NOT include code suggestion blocks.";
+
+  const skillInstruction = `<review_skill>\n${getReviewSkill()}\n</review_skill>\n\n${passInstruction}`;
 
   const securityReviewEnabled = process.env.SECURITY_REVIEW_ENABLED === "true";
 

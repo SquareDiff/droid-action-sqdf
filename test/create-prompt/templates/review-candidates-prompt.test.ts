@@ -52,13 +52,19 @@ describe("generateReviewCandidatesPrompt", () => {
     expect(prompt).toContain("pr_description.txt");
   });
 
-  it("instructs to invoke the review skill for Pass 1", () => {
+  it("inlines the review skill content and references Pass 1", () => {
     const context = createBaseContext();
 
     const prompt = generateReviewCandidatesPrompt(context);
 
-    expect(prompt).toContain("Invoke the 'review' skill");
+    // Override sentinel — proves this fork's skill is being inlined rather
+    // than Droid falling through to the built-in skill registry.
+    expect(prompt).toContain("SKILL_OVERRIDE_v1");
+    // Stable content from the inlined skill body.
+    expect(prompt).toContain("<review_skill>");
+    expect(prompt).toContain("</review_skill>");
     expect(prompt).toContain("Pass 1: Candidate Generation");
+    expect(prompt).toContain("Reporting Gate");
   });
 
   it("includes senior engineer framing", () => {
