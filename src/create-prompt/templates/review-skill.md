@@ -42,8 +42,22 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Incorrect condition/expression**: Wrong boolean operator (AND vs OR), inverted condition, wrong comparison operand, expression that doesn't match stated intent in comments or naming
+- **Contract violations in callers/callees**: Function called with wrong argument order, missing required parameter after signature change, return value used incorrectly by callers
 
 ## Systematic Analysis Patterns
+
+### Build a Behavior Model First
+
+Before generating any findings, build an explicit understanding of what the code is supposed to do:
+
+1. **Read the surrounding context**: For each changed function/method, read the full function body (not just the diff), its callers, and its callees. Understand what the code did BEFORE the change and what it does AFTER.
+2. **Identify the contract**: What are the inputs, outputs, preconditions, postconditions, and invariants? What does the function promise to its callers?
+3. **Check existing patterns**: Grep for similar code elsewhere in the codebase. If other callers/implementations follow a particular pattern, that pattern is likely intentional — deviations from it are where bugs hide.
+4. **Understand the data model**: For database/API changes, read the schema, model definitions, or type declarations to understand what values are legal and what relationships exist.
+5. **Note conventions**: If the codebase consistently handles a concern in a particular way (error handling, null checks, serialization), assume that convention is correct unless you find evidence otherwise.
+
+This step is NOT optional. Skipping it is the #1 cause of both false positives (flagging correct code you don't understand) and false negatives (missing bugs because you don't know what correct looks like).
 
 ### Logic & Variable Usage
 
@@ -96,10 +110,13 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 
 Before flagging an issue:
 
-1. Verify with Grep/Read -- do not speculate
-2. Trace data flow to confirm a real trigger path
-3. Check whether the pattern exists elsewhere (may be intentional)
-4. For tests: verify test assumptions match production behavior
+1. **Verify the behavior model**: Confirm you understand what the code SHOULD do by reading callers, tests, docs, or related code. If you cannot articulate the correct behavior, do not flag.
+2. **Verify the bug is real**: Use Grep/Read to confirm the issue exists. Trace data flow to confirm a real trigger path.
+3. **Verify the behavior is unintentional**: Check whether the pattern exists elsewhere in the codebase. If it does, it's likely intentional. Check git blame or commit messages if the pattern seems odd but deliberate.
+4. **Verify the impact**: Confirm the bug has a concrete, reachable consequence (crash, wrong result, security hole, data loss).
+5. **State your evidence**: For each finding, you must be able to cite specific code (a caller, a type definition, a schema, a test) that proves the current behavior is wrong.
+
+Critical anti-pattern: Do NOT flag code as buggy just because it looks unusual, unfamiliar, or different from how you would write it. The question is always "does this produce wrong results?" not "is this how I would do it?"
 
 ## Reporting Gate
 
@@ -117,13 +134,17 @@ Before flagging an issue:
 - Defensive "what-if" scenarios without a realistic trigger
 - Cosmetic issues (message text, naming, formatting)
 - Suggestions to "add guards" or "be safer" without a concrete failure path
+- Code that looks different from what you'd write but produces correct results
+- Patterns you find unfamiliar if the codebase uses them consistently elsewhere
+- Issues in unchanged code that the PR did not introduce or modify
 
 ### Confidence calibration
 
-- **P0**: Virtually certain of a crash or exploit
-- **P1**: High-confidence correctness or security issue
+- **P0**: Virtually certain of a crash or exploit — you can cite the exact execution path
+- **P1**: High-confidence correctness or security issue — you have evidence from the codebase
 - **P2**: Plausible bug but cannot fully verify the trigger path from available context
 - Prefer definite bugs over possible bugs. Report possible bugs only with a realistic execution path.
+- If you cannot explain WHY the current code is wrong (citing a contract, type, schema, or test that it violates), downgrade or drop the finding.
 
 ## Priority Levels
 
@@ -139,6 +160,7 @@ Each finding should include:
 - Priority tag: `[P0]`, `[P1]`, `[P2]`, or `[P3]`
 - Clear imperative title (<=80 chars)
 - One short paragraph explaining *why* it's a bug and *how* it manifests
+- **Evidence**: What specific code/contract/type/test proves this is wrong
 - File path and line number
 - Optional: code snippet (<=3 lines) or suggested fix
 
@@ -167,10 +189,12 @@ The review process uses two passes: candidate generation and validation.
 
 ### Pass 1: Candidate Generation
 
-#### Step 0: Understand the PR intent
+#### Step 0: Understand the PR intent and build behavior model
 
 1. Read the PR description to understand the purpose and scope of the changes.
 2. If the PR description contains a ticket URL (e.g., Jira, Linear, GitHub issue link) or a ticket ID, **always fetch it** to understand the full requirements and acceptance criteria.
+3. **Read surrounding code**: For every changed function, read its full implementation, its callers (grep for call sites), and the types/interfaces it implements. Build an explicit mental model of what "correct" means.
+4. **Identify what changed semantically**: Not just what lines changed, but what BEHAVIOR changed. What could this code do before that it can't now? What can it do now that it couldn't before? What existing behavior was supposed to be preserved?
 
 #### Step 1: Triage and group modified files
 
@@ -202,7 +226,7 @@ Use the Task tool to spawn parallel `file-group-reviewer` subagents. Each subage
 For each group, invoke the Task tool with:
 - `subagent_type`: "file-group-reviewer"
 - `description`: Brief label (e.g., "Review auth module")
-- `prompt`: Must include the PR context, the list of assigned files, the relevant diff sections, and instructions to return a JSON array of findings
+- `prompt`: Must include the PR context, the behavioral model (what changed semantically and what correct means), the list of assigned files, the relevant diff sections, and instructions to return a JSON array of findings
 
 #### Step 3: Aggregate subagent results
 
@@ -220,7 +244,14 @@ The validator independently re-examines each candidate against the diff and code
 
 #### Validation rules
 
-Apply the same Reporting Gate as above, plus reject if ANY of these are true:
+For each candidate finding, the validator MUST:
+
+1. **Re-read the relevant code** (not just the diff line — full function + callers)
+2. **Independently confirm the behavior model**: Does the validator agree with the finding's claim about what "correct" behavior should be? If not, reject.
+3. **Trace the trigger path end-to-end**: Can you construct a concrete input/call sequence that hits this bug?
+4. **Check for existing similar patterns**: Grep for the same pattern elsewhere. If it exists and works, the pattern is likely intentional.
+
+Reject if ANY of these are true:
 
 - It's speculative / "might" without a concrete trigger
 - It's stylistic / naming / formatting
@@ -229,12 +260,14 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - The anchor (path/side/line/startLine) would need to change to make the suggestion work
 - It flags missing error handling / try-catch for a code path that won't crash in practice
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
-- It's about code that appears in the diff but is not part of the PR's primary change
+- The flagged pattern exists elsewhere in the codebase and works correctly there
+- The validator cannot independently verify what "correct" behavior should be (i.e., cannot cite a contract, type, test, or doc that the code violates)
+- The finding is about code that the reviewer finds unfamiliar rather than code that produces wrong results
 
 #### Confidence-based filtering
 
 - **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
-- **P1 findings**: Approve if you can verify the logic error or security issue is real.
+- **P1 findings**: Approve if you can verify the logic error or security issue is real, citing specific evidence (types, contracts, callers, tests).
 - **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
 
 #### Strict deduplication
