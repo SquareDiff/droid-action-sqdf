@@ -26,6 +26,16 @@ Your task is to review code changes and identify high-confidence, actionable bug
 - Broken dependencies, contracts, or tests
 - Security issues and performance problems
 
+### Attention Priority
+
+Not all changed lines deserve equal scrutiny. Allocate attention based on behavioral impact:
+
+1. **Core behavioral changes** (most attention): New logic, modified conditionals, changed data transformations, altered control flow. For these, trace specific inputs through the new code and verify the output/side-effects are correct.
+2. **Contract boundaries** (high attention): Changed function signatures, API responses, serialization formats, database schemas. Check that all consumers remain compatible.
+3. **Auxiliary changes** (less attention): Renames, moves, formatting, config, boilerplate. Only flag if you spot a clear defect — do not pattern-match speculatively here.
+
+Spend the majority of your analysis time on category 1. The most impactful bugs hide in the core behavioral change, not in peripheral code.
+
 ## Bug Patterns
 
 Only flag issues you are confident about -- avoid speculative or stylistic nitpicks.
@@ -42,8 +52,18 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Unintended behavioral consequences**: The intended change works for the happy path but breaks an edge case, alternate code path, or pre-existing caller expectation that the author didn't consider
 
 ## Systematic Analysis Patterns
+
+### Behavioral Delta Analysis
+
+For every non-trivial logic change, explicitly answer:
+1. What did the old code produce for a given input/state?
+2. What does the new code produce for that same input/state?
+3. Is the difference intentional and correct for ALL relevant inputs — including empty/null inputs, boundary values, and error states?
+
+When the old and new behavior differ in a way the PR description doesn't mention or explain, investigate further — this is where unintended bugs hide.
 
 ### Logic & Variable Usage
 
@@ -96,10 +116,13 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 
 Before flagging an issue:
 
-1. Verify with Grep/Read -- do not speculate
-2. Trace data flow to confirm a real trigger path
-3. Check whether the pattern exists elsewhere (may be intentional)
-4. For tests: verify test assumptions match production behavior
+1. **Construct a specific trigger**: Name a concrete input, state, or call sequence that reaches the buggy code and produces a wrong result. If you cannot construct one, do not flag it.
+2. **Verify with Grep/Read**: Confirm your understanding of types, callers, and surrounding code — do not speculate about what adjacent code does.
+3. **Trace the full path**: Follow the triggering input from entry point through the changed code to the incorrect output/side-effect. Each step must be grounded in code you have read.
+4. **Check whether the pattern exists elsewhere**: If similar code appears in the codebase and works correctly, the pattern may be intentional — investigate before flagging.
+5. **For tests**: Verify test assumptions match production behavior.
+
+If at any step you cannot ground your claim in specific code you have read, downgrade or discard the finding.
 
 ## Reporting Gate
 
@@ -117,6 +140,9 @@ Before flagging an issue:
 - Defensive "what-if" scenarios without a realistic trigger
 - Cosmetic issues (message text, naming, formatting)
 - Suggestions to "add guards" or "be safer" without a concrete failure path
+- Issues where you cannot name a specific input or state that triggers the problem
+- Patterns that merely look unusual but produce correct results for all reachable inputs
+- Findings in auxiliary/boilerplate code where you haven't verified the trigger path through the actual runtime context
 
 ### Confidence calibration
 
@@ -230,6 +256,7 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - It flags missing error handling / try-catch for a code path that won't crash in practice
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
 - It's about code that appears in the diff but is not part of the PR's primary change
+- The reviewer cannot articulate a specific input/state that triggers the issue
 
 #### Confidence-based filtering
 
