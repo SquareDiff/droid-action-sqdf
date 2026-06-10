@@ -42,6 +42,9 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Default/fallback path errors**: Wrong default values, fallback branches that silently produce incorrect results, default cases in switches/conditionals that don't match the domain's actual default behavior
+- **Incomplete condition coverage**: New branches or cases added without handling all relevant states; boolean expressions that miss a required term; early returns that skip necessary cleanup or updates
+- **Stale references after refactoring**: Renamed or moved symbols where some call sites, config entries, or string references still point to the old name/location
 
 ## Systematic Analysis Patterns
 
@@ -51,6 +54,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- When new enum values, states, or options are added, verify all switch/match/if-else chains that consume them are updated
 
 ### Null/Undefined Safety
 
@@ -117,6 +121,7 @@ Before flagging an issue:
 - Defensive "what-if" scenarios without a realistic trigger
 - Cosmetic issues (message text, naming, formatting)
 - Suggestions to "add guards" or "be safer" without a concrete failure path
+- Behavior that differs from your expectation but is consistent with the codebase's established patterns (grep to verify before flagging)
 
 ### Confidence calibration
 
@@ -230,6 +235,7 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - It flags missing error handling / try-catch for a code path that won't crash in practice
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
 - It's about code that appears in the diff but is not part of the PR's primary change
+- It flags a pattern that grep confirms is used consistently elsewhere in the codebase
 
 #### Confidence-based filtering
 
