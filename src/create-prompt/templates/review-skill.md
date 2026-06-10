@@ -42,6 +42,17 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Incomplete state updates**: When multiple fields, caches, or stores must be updated together but only some are modified; partial writes that leave objects in inconsistent states
+- **Semantic copy-paste errors**: Code duplicated and partially adapted — one variable, index, key, or method name still references the original instead of the new target; asymmetric changes in otherwise symmetric code blocks
+- **Closure/callback capture bugs**: Loop variables captured by reference in closures, mutable outer variables read inside deferred/async callbacks after the outer value has changed, stale captures in event handlers or memoized functions
+- **Missing symmetric operations**: Add without remove, subscribe without unsubscribe, register without deregister, acquire without release, increment without decrement — especially in setup/teardown, mount/unmount, or transaction contexts
+- **Incorrect merge/override semantics**: Shallow copy where deep copy is needed (nested mutation bleeds through), spread/Object.assign with wrong argument order, prototype-dropping copies, array concat vs push confusion
+- **Collection mutation during iteration**: Modifying a list, map, or set while iterating over it; index-based deletion that shifts subsequent elements; clearing or reassigning a collection mid-loop
+- **Silent failures / swallowed errors**: Empty catch blocks that discard error context, catch-and-continue that hides failures from callers, logging an error but not propagating or rethrowing when callers depend on failure signaling
+- **Stale references after reassignment**: Holding a reference to an object/element that is later replaced or re-rendered, reading from a variable that was reassigned between the read site's setup and execution
+- **Arithmetic edge cases**: Integer overflow/underflow, floating-point equality comparisons, division by zero without guards, sign errors in offset/index calculations, modular arithmetic off-by-one
+- **Default/fallback path bugs**: Missing or unreachable default/else branches in switches or conditionals, fallback values that mask errors instead of surfacing them, default parameters with wrong types
+- **Boundary condition errors**: Fencepost errors in range boundaries, empty-collection cases unhandled, maximum-length inputs causing truncation or overflow, off-by-one in slice/substring end indices
 
 ## Systematic Analysis Patterns
 
@@ -51,6 +62,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- In duplicated or similar code blocks, verify each copy was fully adapted to its context
 
 ### Null/Undefined Safety
 
@@ -64,6 +76,13 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Verify comparison operators match types (object reference vs value equality)
 - Check function parameters receive expected types after transformations
 - Verify type consistency across serialization/deserialization boundaries
+
+### State & Side-Effect Consistency
+
+- When afunction modifies state in multiple places, verify ALL dependent state is updated (caches, indices, counters, UI state, associated records)
+- Check that mutable arguments are not inadvertently modified when callers expect them unchanged
+- Verify that assignment creates an independent copy when the code later mutates the target independently of the source
+- When code registers a callback, listener, or subscription, verify a corresponding deregistration exists on the appropriate lifecycle boundary
 
 ### Async/Await (JavaScript/TypeScript)
 
@@ -92,6 +111,12 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - When DB schemas change: verify migrations include data backfill
 - When function signatures change: grep for all callers to verify compatibility
 
+### Completeness & Symmetry
+
+- When code handles multiple cases (if/else, switch, pattern match), verify all branches produce consistent output shapes and handle the same set of concerns
+- When a forward operation is added (create, open, start), verify the corresponding reverse (delete, close, stop) is present and reachable
+- When a condition is checked in one code path, verify the complementary path handles the inverse correctly rather than falling through silently
+
 ## Analysis Discipline
 
 Before flagging an issue:
@@ -110,6 +135,7 @@ Before flagging an issue:
 - Security vulnerability with a realistic exploit path
 - Data corruption or loss
 - Breaking contract change (API/response/schema/validator) discoverable in code, tests, or docs
+- State inconsistency where partial updates leave data in a contradictory state
 
 ### Do NOT report
 
@@ -117,6 +143,7 @@ Before flagging an issue:
 - Defensive "what-if" scenarios without a realistic trigger
 - Cosmetic issues (message text, naming, formatting)
 - Suggestions to "add guards" or "be safer" without a concrete failure path
+- Patterns that are unusual but demonstrably used consistently elsewhere in the same codebase
 
 ### Confidence calibration
 
@@ -229,13 +256,13 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - The anchor (path/side/line/startLine) would need to change to make the suggestion work
 - It flags missing error handling / try-catch for a code path that won't crash in practice
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
-- It's about code that appears in the diff but is not part of the PR's primary change
+- It flags a pattern that appears intentionally and consistently in the same codebase
 
 #### Confidence-based filtering
 
 - **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
 - **P1 findings**: Approve if you can verify the logic error or security issue is real.
-- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
+- **P2 findings**: Approve if BOTH of these are true: (1) you can independently verify the bug exists with concrete evidence from the diff or surrounding code, and (2) the bug has a trigger path that a user, caller, or system event could realistically exercise. Reject if the finding relies on speculation, defensive reasoning, or edge cases that require implausible inputs.
 
 #### Strict deduplication
 
