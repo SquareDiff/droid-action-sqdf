@@ -230,11 +230,16 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - It flags missing error handling / try-catch for a code path that won't crash in practice
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
 - It's about code that appears in the diff but is not part of the PR's primary change
+- The stated consequence uses hedging language ("could potentially", "might lead to", "may cause") without a concrete scenario describing specific inputs, the execution path they take, and the wrong outcome they produce
+
+#### Observable-consequence requirement
+
+For every finding that passes the rejection filters above, the validator MUST be able to complete this sentence concretely: "A user/caller/test exercising [specific input or action] will observe [specific wrong behavior: crash with error X, wrong return value Y, corrupted field Z, exploitable response W]." If the validator cannot fill in both blanks with specifics drawn from the code, reject the finding. "The code is incorrect" or "this violates best practice" is not an observable consequence.
 
 #### Confidence-based filtering
 
 - **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
-- **P1 findings**: Approve if you can verify the logic error or security issue is real.
+- **P1 findings**: Approve if you can verify the logic error or security issue is real AND you can state the specific observable failure it produces (what breaks, for whom, under what conditions).
 - **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
 
 #### Strict deduplication
