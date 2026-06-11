@@ -231,6 +231,20 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
 - It's about code that appears in the diff but is not part of the PR's primary change
 
+#### Semantic-delta alignment
+
+Every approved finding must identify a specific semantic consequence of code that was introduced or modified in this diff. Before approving, the validator must confirm:
+
+1. **The finding is about what the code DOES wrong, not what it LOOKS like.** Reject findings that flag unfamiliar idioms, unconventional patterns, or code that merely differs from reviewer expectations without producing incorrect behavior.
+2. **The flagged behavior is a deviation from the code's own stated intent, not from the reviewer's preferred approach.** Use PR description, commit messages, comments, naming, and surrounding code to determine what the author intended. If the code correctly implements its intent, it is not a bug—even if the reviewer would have done it differently.
+3. **The bug is a consequence of THIS diff's changes, not a pre-existing condition.** Reject findings about code that existed before this diff and was not semantically altered by it. Exception: newly broken callers or dependents of a changed interface are valid.
+
+Reject if ANY of these are true:
+- The finding is "this pattern is unusual" without identifying a concrete wrong output or failure
+- The finding describes working code that uses a different approach than the reviewer prefers
+- The flagged code exists identically in the pre-diff codebase and is unaffected by the current changes
+- The finding assumes incorrect intent (e.g., treating an intentional fallthrough, intentional no-op, or intentional permissive check as a bug)
+
 #### Confidence-based filtering
 
 - **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
