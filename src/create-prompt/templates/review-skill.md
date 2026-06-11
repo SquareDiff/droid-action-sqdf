@@ -163,7 +163,7 @@ Suggestion rules:
 
 ## Two-Pass Review Pipeline
 
-The review process uses two passes: candidate generation and validation.
+The review process uses two passes: candidate generation, coverage audit, and validation.
 
 ### Pass 1: Candidate Generation
 
@@ -213,6 +213,32 @@ After all subagents complete, collect and merge their findings:
 3. **Deduplicate**: If multiple subagents flagged the same location (same path + line), keep only one comment (prefer higher priority: P0 > P1 > P2)
 4. **Filter existing**: Remove any comments that duplicate issues already reported
 5. **Write reviewSummary**: Synthesize a 1-3 sentence overall assessment based on all findings
+
+### Pass 1.5: Coverage Audit
+
+After aggregating candidates but BEFORE validation, perform a coverage audit. This step ensures you have not overlooked high-risk areas and that candidates are aligned with the PR's actual intent.
+
+#### Sub-check 1: Behavioral-change coverage
+
+For each function, method, or logical block in the diff that contains a **behavioral change** (not merely formatting, renaming, or import reordering):
+
+- Confirm that at least one candidate finding addresses it, OR
+- Explicitly determine it is clean after examination (no bug present)
+- If a behavioral change has NEITHER a candidate NOR an explicit clean determination, re-examine that area and generate one additional candidate if a real issue exists
+
+Scope this sub-check to actual behavioral changes only. Do not generate gap-filling candidates for trivial modifications, comment-only edits, or mechanical refactors.
+
+#### Sub-check 2: Intent-alignment check
+
+For each candidate finding in the aggregated set, ask:
+
+> "Does this candidate flag a deviation FROM the PR's stated intent, or does it flag the stated intent ITSELF as wrong?"
+
+- **Keep** candidates that identify where the implementation fails to achieve its own stated goal (e.g., the PR says "add retry logic" but the retry counter is never decremented)
+- **Remove** candidates that disagree with the PR's design decision itself (e.g., flagging "you shouldn't use retries here" when the PR's explicit purpose is to add retries)
+- Exception: Keep candidates that flag the intent as a security vulnerability or data-corruption risk, regardless of stated intent
+
+After the coverage audit, pass the refined candidate set to validation.
 
 ### Pass 2: Validation
 
