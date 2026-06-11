@@ -42,6 +42,10 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Value-domain / truthiness traps**: Valid domain values (0, 0.0, empty string, empty list/array) incorrectly treated as absent or disabled due to falsy checks, loose equality, or missing-value sentinels that overlap with legitimate inputs. Only flag when zero/empty IS a meaningful distinct value in the domain -- do NOT flag when the code intentionally treats falsy as "not configured" and zero/empty is not a valid input.
+- **Implicit coercion bugs**: Numeric strings compared with `==` instead of parsed, boolean parameters accepted as truthy/falsy when callers may pass 0 or empty string meaning "use this value", configuration or threshold values where 0 means "apply with zero amount" but the guard treats it as "skip entirely"
+- **Sentinel-value collisions**: Using `null`, `undefined`, `None`, `-1`, or `0` as both "not set" and a valid domain value; default parameter values that shadow legitimate caller-provided values (e.g., `default=None` where `None` is also a meaningful input)
+- **Falsy-guard short-circuits**: Guard clauses like `if (!value)`, `if not value:`, `unless value` that short-circuit on valid inputs like 0, 0.0, empty string, or empty collection when the intent is to check for absence/undefined only
 
 ## Systematic Analysis Patterns
 
@@ -57,6 +61,13 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - For each property access chain (`a.b.c`), verify no intermediate can be null/undefined
 - When Optional types are unwrapped, verify presence is checked first
 - Pay attention to: auth contexts, optional relationships, map/dict lookups, config values
+
+### Value Domain & Coercion
+
+- For each guard clause or conditional that uses truthiness (`if (!x)`, `if not x`, `x || default`, `x ?? fallback`, `x or default`): determine whether 0, 0.0, empty string, or empty collection is a valid input in that context. If so, verify the guard distinguishes "absent/unconfigured" from "present but zero/empty".
+- When a numeric parameter controls rate, probability, threshold, or quantity: check whether the value 0 is a valid setting (meaning "none" or "zero amount") versus being used as a sentinel for "not configured / use default". Flag if `if (rate)` or `if rate:` would skip processing when rate=0 is a legitimate input meaning "zero percent".
+- When code checks for the presence of a configuration value or optional parameter: verify it uses explicit nil/undefined checks (`=== undefined`, `is None`, `== null`) rather than truthiness when the parameter's domain includes falsy values.
+- When default/fallback logic uses `||`, `or`, or ternary expressions: check whether a caller could legitimately pass a falsy value that would be incorrectly overwritten by the default (e.g., `timeout = opts.timeout || 30` discards an intentional `timeout=0`).
 
 ### Type Compatibility & Data Flow
 
@@ -117,6 +128,7 @@ Before flagging an issue:
 - Defensive "what-if" scenarios without a realistic trigger
 - Cosmetic issues (message text, naming, formatting)
 - Suggestions to "add guards" or "be safer" without a concrete failure path
+- Truthiness checks where the guarded domain genuinely excludes falsy values (e.g., a user-ID field that is always a positive integer, or a required non-empty string)
 
 ### Confidence calibration
 
