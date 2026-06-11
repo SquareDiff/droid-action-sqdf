@@ -42,6 +42,9 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Caller-contract breakage**: When a function's return type, shape, or error behavior changes, callers outside the diff may still assume the old contract -- grep for call sites and verify they handle the new behavior
+- **Inconsistent sibling updates**: When one branch of a conditional, switch case, or polymorphic implementation changes behavior, parallel branches or sibling implementations that must remain consistent may now be out of sync
+- **Stale config/flag consumers**: When a configuration key, feature flag, or environment variable is removed, renamed, or given new semantics, consumers elsewhere in the codebase may silently read a missing or misinterpreted value
 
 ## Systematic Analysis Patterns
 
@@ -51,6 +54,9 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- When a function's signature, return type, or error semantics change in the diff, grep for callers and verify they still handle the result correctly
+- When one branch of a multi-way dispatch (switch/if-else/polymorphic override) is modified, check whether sibling branches rely on shared assumptions that now diverge
+- When a field is removed or renamed, trace its consumers to confirm they have been updated or will fail safely
 
 ### Null/Undefined Safety
 
