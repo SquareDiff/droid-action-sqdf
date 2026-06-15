@@ -184,9 +184,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
@@ -222,20 +222,20 @@ The validator independently re-examines each candidate against the diff and code
 
 Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 
-- It's speculative / "might" without a concrete trigger
+- The finding relies on speculation without any evidence gathered (no grep, no read, no trace); hedging language alone (e.g., "might", "could") is NOT grounds for rejection if the reviewer traced a concrete path
 - It's stylistic / naming / formatting
 - It's not anchored to a valid changed line
 - It's already reported (dedupe against existing comments)
 - The anchor (path/side/line/startLine) would need to change to make the suggestion work
-- It flags missing error handling / try-catch for a code path that won't crash in practice
-- It describes a hypothetical race condition without identifying the specific concurrent access pattern
-- It's about code that appears in the diff but is not part of the PR's primary change
+- It flags missing error handling / try-catch where the operation cannot raise in practice (e.g., pure computation, infallible library call)
+- It describes a hypothetical race condition without identifying the specific concurrent access pattern and a realistic scheduling scenario
+- It flags a hypothetical input that requires attacker-level internal knowledge to construct and has no path from any public interface
 
 #### Confidence-based filtering
 
 - **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
 - **P1 findings**: Approve if you can verify the logic error or security issue is real.
-- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
+- **P2 findings**: Approve if the reviewer provided a traced evidence path. Specifically, approve when EITHER of these is true: (1) the reviewer used grep/read to verify the issue exists and identified a concrete trigger that a caller or user could realistically hit, OR (2) the finding identifies a type mismatch, missing null check, or contract violation that is confirmed by reading the surrounding code. Reject P2 findings ONLY when: the finding has no evidence trail (no grep, no read, no code trace), OR the described scenario requires conditions that cannot arise through any normal or adversarial use of the public interface.
 
 #### Strict deduplication
 
