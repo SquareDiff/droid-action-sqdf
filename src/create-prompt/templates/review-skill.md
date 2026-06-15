@@ -184,9 +184,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
