@@ -1,6 +1,6 @@
 ---
 name: review
-version: 2.0.0
+version: 2.1.0
 description: |
   Review code changes and identify high-confidence, actionable bugs. Use when the user wants to:
   - Review a pull request or branch diff
@@ -42,6 +42,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Falsy-value confusion**: Conditions using truthiness checks (`if (value)`, `value || default`) that incorrectly exclude valid falsy values like `0`, `0.0`, `""`, or `false` when those are legitimate inputs
 
 ## Systematic Analysis Patterns
 
@@ -64,6 +65,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Verify comparison operators match types (object reference vs value equality)
 - Check function parameters receive expected types after transformations
 - Verify type consistency across serialization/deserialization boundaries
+- Check truthiness guards: when a value can legitimately be `0`, `0.0`, `""`, or `false`, an `if (value)` or `value || fallback` check silently discards it. Prefer explicit comparisons (`!== null`, `!== undefined`, `!= null`) when the domain allows falsy values.
 
 ### Async/Await (JavaScript/TypeScript)
 
@@ -184,14 +186,30 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
 - Keep related files together so reviewers have full context
 - Each group should be reviewable independently
+
+#### Step 1.5: Context Expansion
+
+After grouping files, proactively gather surrounding context that makes bugs visible. For each file group, identify and read:
+
+1. **Callers of changed public functions/methods**: Use grep to find direct callers (one hop only) of any public function whose signature, return type, or behavior changed. This reveals breaking-contract bugs.
+2. **Type/interface definitions consumed by changed code**: If the diff references types, interfaces, enums, or structs defined elsewhere, read those definitions. This reveals type-mismatch and contract-violation bugs.
+3. **Configuration or constant files referenced by changed code**: If the diff reads from config, environment variables, feature flags, or constant definitions, read those source files. This reveals falsy-value confusion, missing-key errors, and invalid-default bugs.
+
+**Expansion rules:**
+- Limit to one hop: direct callers and direct type sources only. Do not chase callers-of-callers.
+- Cap at 5 additional context files per group. Prioritize by risk: prefer files that define types/interfaces consumed by the change, then callers that pass arguments to changed functions, then config sources.
+- If a context file is already in another group's modified-file list, note the cross-group dependency but do not duplicate it.
+- Record each context file and the reason it was included (e.g., "defines interface consumed by changed handler", "calls changed function with specific argument pattern").
+
+**Why this matters:** Many bugs are invisible from the diff alone. A function that changes its return type only breaks things when you can see what callers expect. A truthiness check on a config value only fails when you can see that `0` or `0.0` is a valid configured value. Expanding context before review prevents these false negatives.
 
 #### Step 2: Spawn parallel subagents to review each group
 
@@ -202,7 +220,12 @@ Use the Task tool to spawn parallel `file-group-reviewer` subagents. Each subage
 For each group, invoke the Task tool with:
 - `subagent_type`: "file-group-reviewer"
 - `description`: Brief label (e.g., "Review auth module")
-- `prompt`: Must include the PR context, the list of assigned files, the relevant diff sections, and instructions to return a JSON array of findings
+- `prompt`: Must include:
+  - The PR context (description, intent, acceptance criteria)
+  - The list of assigned modified files and their diff sections
+  - **The context files identified in Step 1.5**, clearly labeled as "Context (not modified, included for reference)" with the reason each was included
+  - Instructions to return a JSON array of findings
+  - An explicit instruction: "Before dismissing any potential issue, verify your reasoning against the provided context files. A change that looks safe in isolation may break callers, violate type contracts, or mishandle valid input values visible only in the context files."
 
 #### Step 3: Aggregate subagent results
 
