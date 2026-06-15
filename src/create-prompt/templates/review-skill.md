@@ -92,14 +92,45 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - When DB schemas change: verify migrations include data backfill
 - When function signatures change: grep for all callers to verify compatibility
 
-## Analysis Discipline
+## Pre-Report Verification Protocol
 
-Before flagging an issue:
+Do not speculate. Every candidate finding MUST pass through this ordered checklist before you report it. Complete each step; if any step produces disconfirming evidence, discard the finding.
 
-1. Verify with Grep/Read -- do not speculate
-2. Trace data flow to confirm a real trigger path
-3. Check whether the pattern exists elsewhere (may be intentional)
-4. For tests: verify test assumptions match production behavior
+### Step 1: Confirm the trigger path exists in practice
+
+- Identify the specific caller, input, or execution path that reaches the suspicious code.
+- Read the caller(s) to confirm the problematic input can actually arrive. If callers always validate, coerce, or guard before reaching this point, **discard the finding**.
+- For library/framework code: check whether the framework guarantees invariants (e.g., non-null injection, pre-validated inputs) that prevent the trigger.
+
+### Step 2: Search for existing handling
+
+- Grep for the relevant function, variable, or error type in the surrounding module and its direct dependents.
+- Check whether the condition you're worried about is caught by: a try/catch wrapping the call site, a middleware or decorator, a type constraint that makes the state unreachable, or a validation layer upstream.
+- If handling exists, ask: **does it fully cover the flagged path, including edge cases?** If yes, discard. If the handling is partial or only covers some branches, proceed—but narrow the finding to the uncovered branch.
+
+### Step 3: Verify type and contract assumptions
+
+- Read type definitions, interfaces, or schemas relevant to the flagged code.
+- Confirm that the types actually permit the dangerous state (e.g., a field is truly optional, a parameter genuinely accepts the problematic type).
+- If the type system, schema validation, or runtime checks prevent the dangerous state, **discard the finding**.
+
+### Step 4: Check test coverage for the behavior
+
+- Search for tests that exercise the flagged code path.
+- If tests exist and explicitly assert the behavior you're questioning (not just covering the happy path), consider whether the behavior is intentional. Intentional divergence from your expectation is not a bug—**discard unless the test itself is clearly wrong**.
+
+### Step 5: Assess real-world impact
+
+- Can a user, API caller, or automated system realistically trigger this? If the trigger requires internal-only access, admin privileges, or a corrupted database state that other checks prevent, **discard or downgrade to P3**.
+- Is the consequence observable? Silent no-ops or redundant operations that don't corrupt state are not worth reporting.
+
+### Step 6: Finaldisconfirmation check
+
+- Before writing up the finding, state in one sentence what evidence would prove you wrong.
+- Actively search for that evidence (one more grep or file read).
+- If you find it, **discard the finding**.
+
+**If the finding survives all six steps**, report it with the evidence you gathered during verification referenced in the explanation.
 
 ## Reporting Gate
 
@@ -184,9 +215,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
