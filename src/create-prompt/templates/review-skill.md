@@ -113,10 +113,16 @@ Before flagging an issue:
 
 ### Do NOT report
 
-- Test code hygiene (unused vars, setup patterns) unless it causes test failure
-- Defensive "what-if" scenarios without a realistic trigger
-- Cosmetic issues (message text, naming, formatting)
-- Suggestions to "add guards" or "be safer" without a concrete failure path
+- **Test scaffolding and utilities**: Unused variables, verbose setup, or unconventional helpers in test files — UNLESS the pattern causes a test to pass vacuously or assert the wrong thing
+- **Hypothetical "what-if" scenarios**: Speculative failures that require conditions not constructable from the code's actual callers or inputs — UNLESS you can name a specific caller or input that triggers the path
+- **Cosmetic and style differences**: Naming choices, formatting, message text, import ordering, or preferring one equivalent idiom over another — UNLESS the naming causes a runtime mismatch (e.g., serialized field name vs schema expectation)
+- **"Add a guard" suggestions without a crash path**: Recommending defensive checks (nil guards, type assertions, try/catch) where no concrete caller can trigger the unguarded path — UNLESS you identify a specific caller that passes the dangerous value
+- **Intentional error-swallowing or fallback behavior**: Empty catch blocks, silent defaults, or logged-and-continued errors that are clearly part of a resilience strategy (retry loops, graceful degradation, optional feature flags) — UNLESS the swallowed error masks a state corruption or the fallback produces observably wrong results downstream
+- **Patterns consistent with the project's existing conventions**: Code that follows a pattern already used elsewhere in the same codebase (found via grep/read), even if you would design it differently — UNLESS the pattern is demonstrably broken in this specific usage context (different preconditions, types, or invariants than the other usages)
+- **Flagging the PR's stated intent as a bug**: If the PR explicitly intends to change behavior X, do not flag "behavior X changed" as a defect — UNLESS the implementation of that intent is incorrect (wrong direction, incomplete migration, breaks an unstated invariant)
+- **Missing features or TODOs beyond the PR scope**: Functionality not yet implemented, follow-up work mentioned in comments, or capabilities adjacent to but not part of the change — UNLESS the absence causes the code AS CHANGED to crash, corrupt data, or violate a security boundary
+- **Redundant or over-broad error-handling preferences**: Suggesting broader exception types, additional logging, or alternative error-reporting approaches when the existing handling prevents crashes and data loss — UNLESS the current handling silently drops errors that the caller depends on for correctness
+- **Unfamiliar-but-valid language or framework idioms**: Patterns that look unusual but are documented, idiomatic, or compile/pass type-checking in the relevant language/framework — UNLESS you can demonstrate the idiom is misapplied here (wrong argument count, incorrect type context, deprecated with a breaking replacement)
 
 ### Confidence calibration
 
