@@ -184,9 +184,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
@@ -214,35 +214,89 @@ After all subagents complete, collect and merge their findings:
 4. **Filter existing**: Remove any comments that duplicate issues already reported
 5. **Write reviewSummary**: Synthesize a 1-3 sentence overall assessment based on all findings
 
-### Pass 2: Validation
+### Pass 2: Validation (Reject-by-Default)
 
-The validator independently re-examines each candidate against the diff and codebase.
+The validator independently re-examines each candidate against the diff and codebase. The default disposition for every candidate is **REJECT**. A candidate survives only if the validator produces an explicit, tool-verified evidence trail proving the bug is real.
 
-#### Validation rules
+#### Core Principle: Prove It or Kill It
 
-Apply the same Reporting Gate as above, plus reject if ANY of these are true:
+Do not approve a candidate because it "sounds right" or "could be a bug." You must have **already used tools** (Grep, Read, or equivalent) to verify the trigger path before approving. If you cannot produce concrete evidence from the codebase, the candidate is rejected regardless of how plausible it seems.
 
-- It's speculative / "might" without a concrete trigger
-- It's stylistic / naming / formatting
-- It's not anchored to a valid changed line
-- It's already reported (dedupe against existing comments)
-- The anchor (path/side/line/startLine) would need to change to make the suggestion work
-- It flags missing error handling / try-catch for a code path that won't crash in practice
-- It describes a hypothetical race condition without identifying the specific concurrent access pattern
-- It's about code that appears in the diff but is not part of the PR's primary change
+#### Mandatory Evidence Trail
 
-#### Confidence-based filtering
+Before approving ANY candidate (P0-P3), you must document an evidence record. For each candidate you intend to approve, write:
 
-- **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
-- **P1 findings**: Approve if you can verify the logic error or security issue is real.
-- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
+```
+Evidence: [tool] showed [specific observation]
+Trace: [entry point] → [intermediate step(s)] → [failure point]
+Trigger: [concrete condition that causes the bug to manifest]
+```
 
-#### Strict deduplication
+If you cannot fill in all three lines with specific, verified information drawn from tool output, **reject the candidate**.
+
+Examples of SUFFICIENT evidence:
+- "Grep showed no null-check on the return value of `lookup()` in any caller. Read confirmed `lookup()` returns Optional. Trace: request handler → service method → lookup() → unchecked dereference. Trigger: any request where the entity does not exist."
+- "Read showed the comparison uses `==` on objects. Grep confirmed no `__eq__` override in the class hierarchy. Trace: filter function → equality check → always-false comparison. Trigger: any list containing more than zero items."
+
+Examples of INSUFFICIENT evidence (reject these):
+- "This looks like it could be null" (no tool verification)
+- "The pattern is risky" (no trigger path)
+- "Similar code elsewhere has this problem" (not verified for THIS instance)
+- "If the input is malformed, this might crash" (hypothetical, no demonstrated reachability)
+
+#### Rejection Rules (Instant Kill)
+
+Reject immediately if ANY of these are true:
+
+- The finding is speculative — uses "might", "could", "possibly" without a verified trigger
+- The finding is stylistic, naming, or formatting related
+- The finding is not anchored to a valid changed line in the diff
+- The finding duplicates an already-reported issue
+- The anchor (path/side/line/startLine) would need to change for the suggestion to work
+- The finding flags missing error handling for a code path that won't crash in practice
+- The finding describes a hypothetical race condition without identifying specific concurrent access and demonstrating reachability
+- The finding is about code visible in the diff context but not actually part of the PR's changes
+- The finding recommends "adding a guard" or "being safer" without demonstrating a crash or corruption path
+- The finding flags a pattern that is idiomatic or intentional in the codebase (verify with Grep: if the same pattern appears in 3+ established locations, it's likely intentional)
+
+#### Confidence-Tier Approval Gates
+
+**P0 findings** (crash/exploit/data-loss):
+- Approve if you have verified the trigger path exists and the failure is definite
+- Evidence trail required but may be brief (one-step traces are acceptable for obvious crashes)
+- Still reject if the "crash" requires an impossible or purely theoretical input
+
+**P1 findings** (urgent correctness/security):
+- Approve ONLY if you have **already executed** tool calls that confirm:
+  1. The buggy code is reachable from a realistic caller or user action
+  2. The logic error produces a wrong result (not just a suboptimal one)
+  3. No compensating code elsewhere handles the case (grep for guards, try/except, fallback logic)
+- If any of these three checks cannot be completed with available tools, reject the candidate
+
+**P2/P3 findings** (limited-impact or minor bugs):
+- Default: **REJECT**
+- Approve only if ALL of the following are true:
+  1. You independently verified the bug exists with tool output (not inference)
+  2. You identified a concrete, realistic trigger that a user or caller would hit in normal operation (not edge cases or adversarial inputs)
+  3. The finding is NOT about defensive coding, missing validation on unlikely inputs, or style
+  4. The evidence trail is complete (all three lines filled with specifics)
+- When in doubt about a P2/P3: reject. The cost of a false positive exceeds the cost of a missed minor bug.
+
+#### Strict Deduplication
 
 Before approving a candidate:
 1. **Among candidates**: If two or more candidates describe the same underlying bug (same root cause, even if anchored to different lines), approve only the ONE with the best anchor and clearest explanation. Reject the rest with reason "duplicate of candidate N".
 2. **Against existing comments**: If a candidate repeats an issue already covered by an existing PR comment, reject it.
 3. Same file + overlapping line range + same issue = duplicate, even if the body text differs.
+
+#### Validation Output Format
+
+For each candidate, record your decision:
+
+- **APPROVED**: [candidate ID] — Evidence: [1-line summary of verified trace]
+- **REJECTED**: [candidate ID] — Reason: [specific rejection rule that applies]
+
+Only approved candidates appear in the final output.
 
 ## Output
 
