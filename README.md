@@ -1,5 +1,11 @@
 # Droid Actions for GitHub
 
+> SquareDiff fork note: this checkout is optimized for the
+> Factory/Martian eval harness. Eval harness filtering is default-on so Droid
+> does not review the injected harness workflow or stale eval trigger/progress
+> comments. Set `eval_harness_mode: false` only for deliberate non-eval
+> debugging.
+
 This GitHub Action powers the Factory **Droid** app. It watches your pull requests for supported commands and runs a full Droid Exec session to help you ship faster:
 
 - `@droid fill` — turns a bare pull request into a polished description that matches your template or our opinionated fallback.
@@ -224,6 +230,7 @@ jobs:
 | `review_depth`     | `deep`  | Review depth preset: `shallow` (fast) or `deep` (thorough). See [Review Depth](#review-depth) below. |
 | `review_model`     | `""`    | Override the model for code review. When empty, determined by `review_depth`.                        |
 | `reasoning_effort` | `""`    | Override reasoning effort for review. When empty, determined by `review_depth`.                      |
+| `eval_harness_mode` | `true` | Filters eval harness workflow diffs and stale eval trigger/progress comments from Droid prompt inputs. |
 | `fill_model`       | `""`    | Override the model used for PR description fill.                                                     |
 
 ### Review Depth

@@ -36,6 +36,10 @@ inputs:
     description: "Path to write review validated JSON (pass 2)."
     required: false
     default: "${{ runner.temp }}/droid-prompts/review_validated.json"
+  eval_harness_mode:
+    description: "Keep eval-harness filtering enabled for generated workflow diffs and Droid trigger/progress comments. Set to false only for non-eval debugging."
+    required: false
+    default: "true"
   include_suggestions:
     description: "Include code suggestion blocks in review comments when the fix is high-confidence. Set to 'false' to disable suggestions."
     required: false
@@ -93,6 +97,7 @@ runs:
         REASONING_EFFORT: ${{ inputs.reasoning_effort }}
         INCLUDE_SUGGESTIONS: ${{ inputs.include_suggestions }}
         DROID_OUTPUT_FILE: ${{ inputs.output_file }}
+        SQDF_DROID_EVAL_HARNESS: ${{ inputs.eval_harness_mode }}
 
     - name: Setup Custom Droids
       shell: bash
@@ -130,6 +135,7 @@ runs:
         REASONING_EFFORT: ${{ inputs.reasoning_effort }}
         INCLUDE_SUGGESTIONS: ${{ inputs.include_suggestions }}
         DROID_COMMENT_ID: ${{ inputs.tracking_comment_id }}
+        SQDF_DROID_EVAL_HARNESS: ${{ inputs.eval_harness_mode }}
 
     - name: Run Validator
       id: validator

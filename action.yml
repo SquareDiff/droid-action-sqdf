@@ -115,6 +115,10 @@ inputs:
     description: "Path to write review validated JSON (pass 2 of the two-pass review)."
     required: false
     default: "${{ runner.temp }}/droid-prompts/review_validated.json"
+  eval_harness_mode:
+    description: "Keep eval-harness filtering enabled for generated workflow diffs and Droid trigger/progress comments. Set to false only for non-eval debugging."
+    required: false
+    default: "true"
   fill_model:
     description: "Override the model used for PR description fill (e.g., 'claude-sonnet-4-5-20250929', 'gpt-5.1-codex'). Only applies to fill flows."
     required: false
@@ -200,6 +204,7 @@ runs:
         ADDITIONAL_PERMISSIONS: ${{ inputs.additional_permissions }}
         DROID_ARGS: ${{ inputs.droid_args }}
         INCLUDE_SUGGESTIONS: ${{ inputs.include_suggestions }}
+        SQDF_DROID_EVAL_HARNESS: ${{ inputs.eval_harness_mode }}
         ALL_INPUTS: ${{ toJson(inputs) }}
 
     - name: Install Base Action Dependencies
@@ -304,6 +309,7 @@ runs:
         REVIEW_MODEL: ${{ inputs.review_model }}
         REASONING_EFFORT: ${{ inputs.reasoning_effort }}
         INCLUDE_SUGGESTIONS: ${{ inputs.include_suggestions }}
+        SQDF_DROID_EVAL_HARNESS: ${{ inputs.eval_harness_mode }}
 
     - name: Run Droid Exec (validator)
       id: droid_validator

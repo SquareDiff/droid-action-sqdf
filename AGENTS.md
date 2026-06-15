@@ -6,7 +6,8 @@ This file provides guidance to Factory Droid Exec when working with code in this
 > `Factory-AI/droid-action`. The `dev` and `main` branches mirror upstream.
 > Hill-climbing branches (`feat/*`, `candidate/*`) carry SquareDiff-specific
 > modifications — most importantly the **inline review skill override**
-> introduced on `feat/skill-override`. See "SquareDiff: skill override" below.
+> introduced on `feat/skill-override`, plus eval-harness prompt filtering that
+> is default-on in this fork. See "SquareDiff: skill override" below.
 
 ## SquareDiff: skill override
 
@@ -33,6 +34,26 @@ upstream codepath. The companion sentinel `DROID_EXEC_PARAMETERS_v1` confirms th
 effective review model (--model), reasoning effort, and workflow `review_depth` were inlined
 into the prompt. If either string is missing in the log excerpt of the rendered prompt,
 the fork's review path silently regressed.
+
+### Eval harness prompt filtering
+
+This fork is primarily used by the SquareDiff eval/skill-optimization harness,
+not as a general-purpose installation target. `eval_harness_mode` therefore
+defaults to `true`, and an unset `SQDF_DROID_EVAL_HARNESS` environment variable
+also means enabled.
+
+When enabled, prompt assembly:
+
+- removes `.github/workflows/droid-review.yml` from `droid-prompts/pr.diff`;
+- removes stale eval trigger/progress issue comments from
+  `droid-prompts/existing_comments.json`;
+- removes inline review comments whose path is
+  `.github/workflows/droid-review.yml`;
+- preserves ordinary human comments and legitimate Droid inline findings on
+  source files.
+
+Set `eval_harness_mode: false` only when deliberately debugging the raw action
+behavior outside the eval harness.
 
 ### Hill-climbing workflow
 

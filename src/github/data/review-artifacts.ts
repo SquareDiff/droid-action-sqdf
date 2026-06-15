@@ -4,6 +4,90 @@ import type { Octokits } from "../api/client";
 import type { ReviewArtifacts } from "../../create-prompt/types";
 
 const DIFF_MAX_BUFFER = 50 * 1024 * 1024; // 50MB buffer for large diffs
+const EVAL_HARNESS_MODE_ENV = "SQDF_DROID_EVAL_HARNESS";
+const EVAL_HARNESS_WORKFLOW_PATH = ".github/workflows/droid-review.yml";
+
+function isEvalHarnessMode(): boolean {
+  const configured = process.env[EVAL_HARNESS_MODE_ENV];
+  if (configured == null || configured.trim() === "") return true;
+  return !["0", "false", "no", "off"].includes(configured.trim().toLowerCase());
+}
+
+export function stripDiffFile(diff: string, filePath: string): string {
+  const blocks = diff.split(/(?=^diff --git )/m);
+  return blocks
+    .filter((block) => {
+      if (!block.startsWith("diff --git ")) return true;
+      const firstLine = block.split(/\r?\n/, 1)[0] ?? "";
+      const match = /^diff --git a\/(.+) b\/(.+)$/.exec(firstLine);
+      if (!match) return true;
+      return match[1] !== filePath && match[2] !== filePath;
+    })
+    .join("");
+}
+
+function filterEvalHarnessDiff(diff: string): string {
+  if (!isEvalHarnessMode()) return diff;
+  const filtered = stripDiffFile(diff, EVAL_HARNESS_WORKFLOW_PATH);
+  if (filtered !== diff) {
+    console.log(
+      `Filtered eval harness workflow diff from PR diff: ${EVAL_HARNESS_WORKFLOW_PATH}`,
+    );
+  }
+  return filtered;
+}
+
+function isEvalHarnessIssueComment(comment: {
+  body?: unknown;
+  user?: unknown;
+}): boolean {
+  const body = String(comment.body ?? "");
+  const user =
+    typeof comment.user === "object" && comment.user != null
+      ? String((comment.user as { login?: unknown }).login ?? "").toLowerCase()
+      : "";
+  const normalizedBody = body.trim().toLowerCase();
+  return (
+    body.includes("sqdf-droid-eval-trigger") ||
+    normalizedBody.startsWith("@droid review") ||
+    (user.includes("droid") &&
+      (body.includes("Droid is working") || body.includes("[View job run]")))
+  );
+}
+
+function isEvalHarnessReviewComment(comment: { path?: unknown }): boolean {
+  const path = String(comment.path ?? "");
+  return path === EVAL_HARNESS_WORKFLOW_PATH;
+}
+
+export function filterEvalHarnessComments<
+  IssueComment extends { body?: unknown; path?: unknown; user?: unknown },
+  ReviewComment extends { body?: unknown; path?: unknown; user?: unknown },
+>(
+  issueComments: IssueComment[],
+  reviewComments: ReviewComment[],
+): { issueComments: IssueComment[]; reviewComments: ReviewComment[] } {
+  if (!isEvalHarnessMode()) {
+    return { issueComments, reviewComments };
+  }
+  const filteredIssueComments = issueComments.filter(
+    (comment) => !isEvalHarnessIssueComment(comment),
+  );
+  const filteredReviewComments = reviewComments.filter(
+    (comment) => !isEvalHarnessReviewComment(comment),
+  );
+  const removedIssue = issueComments.length - filteredIssueComments.length;
+  const removedReview = reviewComments.length - filteredReviewComments.length;
+  if (removedIssue || removedReview) {
+    console.log(
+      `Filtered eval harness comments before review: ${removedIssue} issue, ${removedReview} review`,
+    );
+  }
+  return {
+    issueComments: filteredIssueComments,
+    reviewComments: filteredReviewComments,
+  };
+}
 
 /**
  * Compute the PR diff and store it on disk.
@@ -75,6 +159,7 @@ export async function computeAndStoreDiff(
     }
   }
 
+  diff = filterEvalHarnessDiff(diff);
   const diffPath = `${promptsDir}/pr.diff`;
   await writeFile(diffPath, diff);
   console.log(`Stored PR diff (${diff.length} bytes) at ${diffPath}`);
@@ -106,10 +191,10 @@ export async function fetchAndStoreComments(
     }),
   ]);
 
-  const comments = {
-    issueComments: issueComments.data,
-    reviewComments: reviewComments.data,
-  };
+  const comments = filterEvalHarnessComments(
+    issueComments.data,
+    reviewComments.data,
+  );
 
   const commentsPath = `${promptsDir}/existing_comments.json`;
   await writeFile(commentsPath, JSON.stringify(comments, null, 2));

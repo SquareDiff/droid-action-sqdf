@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
   computeAndStoreDiff,
+  filterEvalHarnessComments,
   fetchAndStoreComments,
   storeDescription,
   computeReviewArtifacts,
+  stripDiffFile,
 } from "../../../src/github/data/review-artifacts";
 import * as childProcess from "child_process";
 import * as fsPromises from "fs/promises";
@@ -19,12 +21,84 @@ describe("review-artifacts", () => {
   });
 
   afterEach(() => {
+    delete process.env.SQDF_DROID_EVAL_HARNESS;
     execSyncSpy?.mockRestore();
     writeFileSpy.mockRestore();
     mkdirSpy.mockRestore();
   });
 
   describe("computeAndStoreDiff", () => {
+    it("filters the eval workflow diff block by default", async () => {
+      execSyncSpy = spyOn(childProcess, "execSync").mockImplementation(((
+        cmd: string,
+      ) => {
+        if (cmd.includes("is-shallow-repository")) return "false\n";
+        if (cmd.includes("merge-base")) return "abc123\n";
+        if (cmd.includes("diff")) {
+          return [
+            "diff --git a/.github/workflows/droid-review.yml b/.github/workflows/droid-review.yml",
+            "--- a/.github/workflows/droid-review.yml",
+            "+++ b/.github/workflows/droid-review.yml",
+            "+uses: SquareDiff/droid-action-sqdf@candidate/test",
+            "diff --git a/src/app.ts b/src/app.ts",
+            "--- a/src/app.ts",
+            "+++ b/src/app.ts",
+            "+const value = 1;",
+          ].join("\n");
+        }
+        return "";
+      }) as typeof childProcess.execSync);
+
+      await computeAndStoreDiff("main", "/tmp/test");
+
+      const writeCall = writeFileSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && (c[0] as string).includes("pr.diff"),
+      );
+      expect(writeCall![1]).not.toContain("droid-review.yml");
+      expect(writeCall![1]).toContain("src/app.ts");
+    });
+
+    it("keeps the eval workflow diff block when eval harness mode is explicitly disabled", async () => {
+      process.env.SQDF_DROID_EVAL_HARNESS = "false";
+      execSyncSpy = spyOn(childProcess, "execSync").mockImplementation(((
+        cmd: string,
+      ) => {
+        if (cmd.includes("is-shallow-repository")) return "false\n";
+        if (cmd.includes("merge-base")) return "abc123\n";
+        if (cmd.includes("diff")) {
+          return [
+            "diff --git a/.github/workflows/droid-review.yml b/.github/workflows/droid-review.yml",
+            "--- a/.github/workflows/droid-review.yml",
+            "+++ b/.github/workflows/droid-review.yml",
+            "+uses: SquareDiff/droid-action-sqdf@candidate/test",
+          ].join("\n");
+        }
+        return "";
+      }) as typeof childProcess.execSync);
+
+      await computeAndStoreDiff("main", "/tmp/test");
+
+      const writeCall = writeFileSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[0] === "string" && (c[0] as string).includes("pr.diff"),
+      );
+      expect(writeCall![1]).toContain("droid-review.yml");
+    });
+
+    it("does not strip similarly named workflow files", () => {
+      const diff = [
+        "diff --git a/.github/workflows/droid-review.yml.bak b/.github/workflows/droid-review.yml.bak",
+        "--- a/.github/workflows/droid-review.yml.bak",
+        "+++ b/.github/workflows/droid-review.yml.bak",
+        "+backup",
+      ].join("\n");
+
+      expect(stripDiffFile(diff, ".github/workflows/droid-review.yml")).toBe(
+        diff,
+      );
+    });
+
     it("computes diff via git merge-base and writes to disk", async () => {
       execSyncSpy = spyOn(childProcess, "execSync").mockImplementation(((
         cmd: string,
@@ -93,6 +167,62 @@ describe("review-artifacts", () => {
   });
 
   describe("fetchAndStoreComments", () => {
+    it("filters eval trigger/progress comments by default but preserves normal review comments", async () => {
+      const comments = filterEvalHarnessComments(
+        [
+          {
+            id: 1,
+            body: "<!-- sqdf-droid-eval-trigger run=abc -->\n@droid review",
+          },
+          { id: 2, body: "@droid review please" },
+          {
+            id: 3,
+            body: "Droid is working [View job run](https://example.invalid)",
+            user: { login: "factory-droid[bot]" },
+          },
+          {
+            id: 4,
+            body: "human context that should stay",
+            user: { login: "octocat" },
+          },
+        ],
+        [
+          {
+            id: 5,
+            path: ".github/workflows/droid-review.yml",
+            body: "workflow noise",
+            user: { login: "factory-droid[bot]" },
+          },
+          {
+            id: 6,
+            path: "src/app.ts",
+            body: "legitimate Droid finding",
+            user: { login: "factory-droid[bot]" },
+          },
+        ],
+      );
+
+      expect(comments.issueComments.map((comment) => comment.id)).toEqual([4]);
+      expect(comments.reviewComments.map((comment) => comment.id)).toEqual([6]);
+    });
+
+    it("keeps eval trigger/progress comments when eval harness mode is explicitly disabled", async () => {
+      process.env.SQDF_DROID_EVAL_HARNESS = "false";
+      const comments = filterEvalHarnessComments(
+        [{ id: 1, body: "@droid review" }],
+        [
+          {
+            id: 2,
+            path: ".github/workflows/droid-review.yml",
+            body: "workflow",
+          },
+        ],
+      );
+
+      expect(comments.issueComments.map((comment) => comment.id)).toEqual([1]);
+      expect(comments.reviewComments.map((comment) => comment.id)).toEqual([2]);
+    });
+
     it("fetches issue and review comments and writes JSON", async () => {
       const mockOctokit = {
         rest: {
