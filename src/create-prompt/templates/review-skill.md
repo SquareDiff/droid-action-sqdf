@@ -33,6 +33,9 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
@@ -51,6 +54,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- For each conditional guard on a config/parameter value, verify that valid falsy values (0, empty string, false) are not incorrectly excluded -- distinguish "not provided" from "provided as a falsy value"
 
 ### Null/Undefined Safety
 
@@ -65,6 +69,33 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check function parameters receive expected types after transformations
 - Verify type consistency across serialization/deserialization boundaries
 
+### Execution Path Tracing
+
+When a suspicious pattern is identified in the diff, do not report it based solely on the changed lines. Execute structured forward and backward traces to confirm or dismiss:
+
+**Forward trace (entry → transformation → effect):**
+1. Identify the entry points that reach the suspicious code (callers, event handlers, API routes, scheduled jobs)
+2. For each entry point, determine what input values or states could trigger the suspicious path
+3. Follow the execution forward through the suspicious code to its observable effect (return value, state mutation, side effect, response)
+4. Confirm whether the effect constitutes a real bug (wrong value returned, state corrupted, security invariant violated)
+
+**Backward trace (symptom → cause → trigger):**
+1. Name the concrete symptom (crash, wrong result, data corruption, security bypass)
+2. Identify the immediate cause in the changed code (wrong variable, missing check, incorrect transformation)
+3. Trace backward to determine what realistic input, state, or timing would trigger that cause
+4. Verify the trigger is reachable in production (not blocked by upstream validation, feature flags, or dead code)
+
+**When to trace:**
+- After any bug-pattern match (from the checklist above) before deciding to report or dismiss
+- When a changed function's callers or consumers are not visible in the diff — read them
+- When error/exception paths branch away from the happy path in the changed code
+- When a change modifies shared state, a return type, or a public interface
+
+**Trace-driven decisions:**
+- If forward trace reaches a confirmed harmful effect AND backward trace identifies a realistic trigger → report the finding
+- If either trace dead-ends (no reachable entry point, upstream validation blocks the trigger, effect is benign) → dismiss the candidate
+- If the trace reveals a bug at a DIFFERENT location than the initial pattern match → report at the location where the bug actually manifests
+
 ### Async/Await (JavaScript/TypeScript)
 
 - Flag `forEach`/`map`/`filter` with async callbacks -- these don't await
@@ -76,7 +107,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - SSRF: Flag unvalidated URL fetching with user input
 - XSS: Check for unescaped user input in HTML/template contexts
 - Auth/session: OAuth state must be per-request random; CSRF tokens must be verified
-- Input validation: `indexOf()`/`startsWith()` for origin validation can be bypassed
+- Input validation:`indexOf()`/`startsWith()` for origin validation can be bypassed
 - Timing: Secret/token comparison should use constant-time functions
 - Cache poisoning: Security decisions shouldn't be cached asymmetrically
 
@@ -97,9 +128,13 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 Before flagging an issue:
 
 1. Verify with Grep/Read -- do not speculate
-2. Trace data flow to confirm a real trigger path
-3. Check whether the pattern exists elsewhere (may be intentional)
-4. For tests: verify test assumptions match production behavior
+2. Execute a forward trace (entry → transformation → effect) to confirm the bug produces an observable wrong outcome
+3. Execute a backward trace (symptom → cause → trigger) to confirm a realistic input or state reaches the buggy path
+4. If either trace cannot be completed from available context, read the missing callers, type definitions, or configuration before dismissing or reporting
+5. Check whether the pattern exists elsewhere (may be intentional)
+6. For tests: verify test assumptions match production behavior
+
+Do not short-circuit tracing. A pattern match alone (e.g., "this looks like it could be null") is not sufficient to report. The forward trace must reach a harmful effect and the backward trace must identify a realistic trigger.
 
 ## Reporting Gate
 
@@ -127,7 +162,7 @@ Before flagging an issue:
 
 ## Priority Levels
 
-- **[P0]** Blocking -- crash, exploit, data loss
+- **[P0]** Blocking -- crash, exploit,data loss
 - **[P1]** Urgent correctness or security issue
 - **[P2]** Real bug with limited impact
 - **[P3]** Minor but real bug
@@ -184,9 +219,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
@@ -230,6 +265,13 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - It flags missing error handling / try-catch for a code path that won't crash in practice
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
 - It's about code that appears in the diff but is not part of the PR's primary change
+
+#### Validation with path tracing
+
+For each candidate under validation, verify that:
+- The forward trace was completed: there is an identified entry point and a confirmed harmful effect
+- The backward trace was completed: there is a realistic trigger condition that is not blocked by upstream guards
+- If the candidate lacks either trace, attempt the trace yourself before rejecting — the bug may be real but inadequately justified
 
 #### Confidence-based filtering
 
