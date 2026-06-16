@@ -33,6 +33,9 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
@@ -51,6 +54,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- For each conditional guard on a config/parameter value, verify that valid falsy values (0, empty string, false) are not incorrectly excluded -- distinguish "not provided" from "provided as a falsy value"
 
 ### Null/Undefined Safety
 
@@ -127,7 +131,7 @@ Before flagging an issue:
 
 ## Priority Levels
 
-- **[P0]** Blocking -- crash, exploit, data loss
+- **[P0]** Blocking -- crash, exploit,data loss
 - **[P1]** Urgent correctness or security issue
 - **[P2]** Real bug with limited impact
 - **[P3]** Minor but real bug
@@ -184,9 +188,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
@@ -216,26 +220,50 @@ After all subagents complete, collect and merge their findings:
 
 ### Pass 2: Validation
 
-The validator independently re-examines each candidate against the diff and codebase.
+The validator independently re-examines each candidate against the diff and codebase. Before applying approval or rejection logic, the validator must first classify each finding into an evidence tier.
 
-#### Validation rules
+#### Step 1: Evidence-tier classification
 
-Apply the same Reporting Gate as above, plus reject if ANY of these are true:
+For each candidate finding, determine which tier it belongs to:
 
-- It's speculative / "might" without a concrete trigger
+**Tier A — Evidence-backed**: The finding is supported by a concrete, traced execution path. To qualify for Tier A, ALL of the following must be true:
+- The validator can identify a specific caller, input, or entry point that reaches the buggy code
+- The validator has used tools (Grep, Read) to confirm the trigger path exists in the actual codebase — not inferred from the diff alone
+- The consequence is deterministic given that trigger (a crash, wrong value, security bypass, or data corruption that always occurs when the path is exercised)
+- The finding does not depend on hypothetical future changes, unlikely configurations, or adversarial inputs that have no realistic source in the application
+
+**Tier B — Speculative**: Any finding that does NOT meet all Tier A criteria. This includes:
+- Findings where the trigger path is plausible but unverified ("this could happen if...")
+- Findings based on code shape or pattern matching without traced data flow
+- Findings that assume a caller or input exists without confirming it
+- Findings about defensive gaps where no concrete crash path is demonstrated
+- Findings where the reviewer reasons about what "might" go wrong rather than what demonstrably does go wrong
+
+When classification is ambiguous, default to Tier B. The burden of proof is on the finding to demonstrate concreteness, not on the validator to disprove it.
+
+#### Step 2: Apply tier-specific approval rules
+
+**Tier A (evidence-backed) approval**:
+- P0 findings: Approve. The traced path confirms the crash/exploit.
+- P1 findings: Approve if the traced logic error or security issue produces a wrong observable result.
+- P2 findings: Approve only if the trigger is a realistic user/caller path (not an edge case requiring unusual configuration or adversarial input).
+
+**Tier B (speculative) rejection**:
+- P0 findings: Reject unless you can immediately escalate to Tier A by performing the verification yourself right now. If you cannot trace a concrete path within the validation step, reject.
+- P1 findings: Reject. Speculative P1s are the primary source of false positives — they sound plausible but lack traced evidence.
+- P2 findings: Always reject. A speculative P2 has no place in the final output.
+
+#### Step 3: Apply universal rejection rules
+
+Regardless of tier, reject if ANY of these are true:
+
 - It's stylistic / naming / formatting
 - It's not anchored to a valid changed line
 - It's already reported (dedupe against existing comments)
 - The anchor (path/side/line/startLine) would need to change to make the suggestion work
-- It flags missing error handling / try-catch for a code path that won't crash in practice
-- It describes a hypothetical race condition without identifying the specific concurrent access pattern
+- It describes a hypothetical race condition without identifying the specific concurrent access pattern and demonstrating that concurrent access actually occurs
 - It's about code that appears in the diff but is not part of the PR's primary change
-
-#### Confidence-based filtering
-
-- **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
-- **P1 findings**: Approve if you can verify the logic error or security issue is real.
-- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
+- It flags missing error handling where the unhandled case would not cause observable incorrect behavior (e.g., a fetch that already has a surrounding try/catch, or a path where failure is handled by a higher-level mechanism)
 
 #### Strict deduplication
 
@@ -246,6 +274,6 @@ Before approving a candidate:
 
 ## Output
 
-When invoked locally (TUI/CLI), analyze the changes and provide a structured summary of findings. List each finding with its priority, file, line, and description.
+When invoked locally (TUI/CLI), analyze the changes and provide a structured summary of findings. List each finding with its priority,file, line, and description.
 
 Do **not** post inline comments to the PR or submit a GitHub review unless the user explicitly asks for it.
