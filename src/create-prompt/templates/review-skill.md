@@ -33,6 +33,9 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
@@ -51,6 +54,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- For each conditional guard on a config/parameter value, verify that valid falsy values (0, empty string, false) are not incorrectly excluded -- distinguish "not provided" from "provided as a falsy value"
 
 ### Null/Undefined Safety
 
@@ -172,37 +176,66 @@ The review process uses two passes: candidate generation and validation.
 1. Read the PR description to understand the purpose and scope of the changes.
 2. If the PR description contains a ticket URL (e.g., Jira, Linear, GitHub issue link) or a ticket ID, **always fetch it** to understand the full requirements and acceptance criteria.
 
-#### Step 1: Triage and group modified files
+#### Step 1: Classify changes by semantic impact
 
-Before reviewing, triage the PR to enable parallel review:
+Before grouping files, classify every changed hunk into one of the following **impact categories**. This classification determines how deeply each change is reviewed.
 
-1. Read the diff to identify ALL modified files
-2. Group files into logical clusters based on:
-   - **Related functionality**: Files in the same module or feature area
-   - **File relationships**: A component and its tests, a class and its interface
-   - **Risk profile**: Security-sensitive files together, database/migration files together
-   - **Dependencies**: Files that import each other or share types
+**Impact Taxonomy:**
 
-3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+| Category | Definition | Examples |
+|----------|-----------|----------|
+| **Critical** | Introduces or modifies externally-observable behavior, security boundaries, data integrity invariants, or concurrency control | New API endpoints, auth/permission checks, payment/billing logic, database migrations with data transformation, cryptographic operations, lock/mutex changes, shared-state writes |
+| **High** | Modifies internal business logic, error handling, or state transitions that affect correctness | Conditional logic changes, error recovery paths, state machine transitions, validation rule changes, data transformation pipelines |
+| **Medium** | Internal restructuring that preserves external behavior but changes code paths | Method extractions, internal API refactors, configuration changes with runtime effect, dependency version bumps with behavioral changes |
+| **Low** | Changes with negligible runtime risk | Test-only changes (new tests, test refactors), documentation, formatting/whitespace, variable renames with no semantic change, import reordering, type-only annotations |
 
-Guidelines for grouping:
-- Aim for 3-6 groups to balance parallelism with context coherence
-- Keep related files together so reviewers have full context
-- Each group should be reviewable independently
+**Classification rules:**
 
-#### Step 2: Spawn parallel subagents to review each group
+- When uncertain, classify one level higher (conservative default)
+- A file may contain hunks in different categories -- classify per-hunk, not per-file
+- Changes touching error paths of Critical/High code inherit that parent's category
+- Test files that test Critical/High behavior are classified as Medium (they can reveal contract misunderstandings)
 
-Use the Task tool to spawn parallel `file-group-reviewer` subagents. Each subagent reviews one group of files independently.
+Document your classification briefly:
+```
+Critical: [list of hunks/files and why]
+High: [list of hunks/files and why]
+Medium: [list of hunks/files and why]
+Low: [list of hunks/files and why]
+```
+
+#### Step 2: Group by impact category and spawn depth-appropriate subagents
+
+Group classified changes by impact category. Within each category, further cluster by functional relatedness (same module, shared types, caller/callee pairs) to maintain context coherence.
+
+Use the Task tool to spawn parallel `file-group-reviewer` subagents. Each subagent reviews one group with **category-appropriate depth and instructions**:
 
 **IMPORTANT**: Spawn ALL subagents in a single response to enable parallel execution.
 
-For each group, invoke the Task tool with:
-- `subagent_type`: "file-group-reviewer"
-- `description`: Brief label (e.g., "Review auth module")
-- `prompt`: Must include the PR context, the list of assigned files, the relevant diff sections, and instructions to return a JSON array of findings
+**Critical-category subagent instructions:**
+- Apply the FULL bug pattern checklist and all systematic analysis patterns
+- MUST read surrounding context: callers of changed functions, type definitions, related configuration consumers
+- MUST trace data flow end-to-end through the change
+- Check for contract/API compatibility with existing consumers
+- Report P0-P2 findings
+
+**High-category subagent instructions:**
+- Apply the full bug pattern checklist
+- Read immediate callers/callees of changed functions
+- Focus on logic correctness, variable usage, and error handling
+- Report P0-P2 findings
+
+**Medium-category subagent instructions:**
+- Focus narrowly on: type mismatches, broken imports, signature incompatibilities
+- Do NOT flag speculative issues about "what if" scenarios
+- Report only P0-P1 findings (definite breakage)
+
+**Low-category subagent instructions:**
+- Check ONLY for: syntax errors, broken imports, test assertions that contradict production code
+- Do NOT flag style, naming, or "could be improved" observations
+- Report only P0 findings (definite crashes)
+
+For each subagent, include in the prompt: the PR context, the list of assigned changes, the relevant diff sections, the impact category, and the depth-appropriate instructions above.
 
 #### Step 3: Aggregate subagent results
 
@@ -212,7 +245,8 @@ After all subagents complete, collect and merge their findings:
 2. **Merge arrays**: Combine all arrays into a single comments array
 3. **Deduplicate**: If multiple subagents flagged the same location (same path + line), keep only one comment (prefer higher priority: P0 > P1 > P2)
 4. **Filter existing**: Remove any comments that duplicate issues already reported
-5. **Write reviewSummary**: Synthesize a 1-3 sentence overall assessment based on all findings
+5. **Enforce category gates**: Reject any finding from a Medium-category subagent that is below P1, and any finding from a Low-category subagent that is below P0
+6. **Write reviewSummary**: Synthesize a 1-3 sentence overall assessment based on all findings
 
 ### Pass 2: Validation
 
@@ -231,11 +265,19 @@ Apply the same Reporting Gate as above, plus reject if ANY of these are true:
 - It describes a hypothetical race condition without identifying the specific concurrent access pattern
 - It's about code that appears in the diff but is not part of the PR's primary change
 
+#### Category-aware validation
+
+During validation, consider the original impact classification of the change where the finding is anchored:
+
+- **Findings on Critical/High changes**: Validate normally per confidence-based filtering below
+- **Findings on Medium changes**: Apply stricter scrutiny -- the finding must describe a definite breakage (import failure, type error, signature mismatch), not a potential logic issue
+- **Findings on Low changes**: Only a definite crash or syntax error survives validation
+
 #### Confidence-based filtering
 
 - **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
 - **P1 findings**: Approve if you can verify the logic error or security issue is real.
-- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
+- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger auser or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
 
 #### Strict deduplication
 
