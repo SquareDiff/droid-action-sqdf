@@ -33,13 +33,20 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
 - **Concurrency hazards**: TOCTOU, lost updates, unsafe shared state, process/thread lifecycle bugs
+- **Atomic state-transition bugs**: Check-then-write flows for one-time-use tokens, quotas, retry counters, device/session limits, cache initialization, and consumed credentials. Flag when two callers can pass the same check before the mutation is persisted, when read-modify-write is not atomic, or when locked/cache code does not re-check after acquiring ownership.
 - **Missing error handling**: For critical operations -- network, persistence, auth, migrations, external APIs
 - **Wrong-variable / shadowing**: Variable name mismatches, contract mismatches (serializer vs validated_data, interface vs abstract method)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
+- **Runtime/framework contract drift**: After refactors or new abstractions, verify method names, signatures, serializers, framework conventions, standard-library APIs, process-exit behavior, and response/JSON shapes against actual callers and runtime semantics. Flag when code calls an unavailable method, silently stops invoking required behavior, serializes unsupported values, or changes an observable contract.
+- **No-op and unreachable refactors**: After moved, renamed, or rewired code, check whether new branches can be reached and whether computed objects, async calls, cache entries, or UI state are actually consumed by the caller. Flag when the change leaves intended behavior inert, discarded, or unreachable with an observable effect.
+- **Error-path state preservation**: When a change adds fallback/default/cache assignment around failing operations, trace the failure branch and verify it does not overwrite previously valid state, convert an invalid or unknown value into an accepted value, or change an externally observed error shape.
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
 
@@ -51,6 +58,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- For each conditional guard on a config/parameter value, verify that valid falsy values (0, empty string, false) are not incorrectly excluded -- distinguish "not provided" from "provided as a falsy value"
 
 ### Null/Undefined Safety
 
@@ -85,12 +93,14 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Shared state modified without synchronization
 - Double-checked locking that doesn't re-check after acquiring lock
 - Non-atomic read-modify-write on shared counters
+- For consume-once, quota, counter, cache, and lazy-init paths, trace check -> mutation -> persistence. Ask whether two concurrent callers can both observe the pre-mutation state.
 
 ### API Contract & Breaking Changes
 
 - When serializers/validators change: verify response structure remains compatible
 - When DB schemas change: verify migrations include data backfill
 - When function signatures change: grep for all callers to verify compatibility
+- For refactors, verify the new abstraction preserves framework-required names, callback signatures, serialization formats, and caller-visible side effects.
 
 ## Analysis Discipline
 
@@ -100,6 +110,9 @@ Before flagging an issue:
 2. Trace data flow to confirm a real trigger path
 3. Check whether the pattern exists elsewhere (may be intentional)
 4. For tests: verify test assumptions match production behavior
+5. For contract/framework findings, report only when the changed code violates a documented or locally enforced contract for the repo's actual version/config, or when callers/tests prove a runtime break.
+6. For async, lifecycle, and atomicity findings, identify the required ordering, shared resource or side effect, and concrete caller/user-visible failure before reporting.
+7. For wrong-identifier findings, require evidence that the two values represent distinct domains at the callee boundary or persistence layer. Similar names alone are not enough.
 
 ## Reporting Gate
 
@@ -127,7 +140,7 @@ Before flagging an issue:
 
 ## Priority Levels
 
-- **[P0]** Blocking -- crash, exploit, data loss
+- **[P0]** Blocking -- crash, exploit,data loss
 - **[P1]** Urgent correctness or security issue
 - **[P2]** Real bug with limited impact
 - **[P3]** Minor but real bug
@@ -184,9 +197,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
