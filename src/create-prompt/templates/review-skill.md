@@ -33,13 +33,19 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
+- **Boundary-sensitive string validation**: For allowlists, origins, domains, redirects, referrers, and HTML/URL sinks, verify comparisons operate on parsed canonical components and exact boundaries, not substrings, suffixes, or full URLs where an origin is required. Flag only when a bypass, dropped operation, or unsafe sink follows directly from the changed comparison.
 - **Concurrency hazards**: TOCTOU, lost updates, unsafe shared state, process/thread lifecycle bugs
 - **Missing error handling**: For critical operations -- network, persistence, auth, migrations, external APIs
 - **Wrong-variable / shadowing**: Variable name mismatches, contract mismatches (serializer vs validated_data, interface vs abstract method)
+- **Semantic near-miss identifiers**: At call, config, metric, translation, serializer, and validator boundaries, compare similarly named keys, parameters, fields, and methods and confirm the changed code reads/writes the same semantic slot the consumer uses. Flag only when the mismatch makes data unreachable, leaves state stale, breaks lookup, or changes an emitted contract.
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
+- **Value-shape normalization bugs**: When data crosses API, queue, cache, persistence, or serialization boundaries, verify changed code preserves required casing, emptiness semantics, deterministic keys, date/time encodability, and collection shape. Flag when a valid value becomes unrepresentable, unrecoverable, or mismatched with the consumer.
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
 
@@ -51,6 +57,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- For each conditional guard on a config/parameter value, verify that valid falsy values (0, empty string, false) are not incorrectly excluded -- distinguish "not provided" from "provided as a falsy value"
 
 ### Null/Undefined Safety
 
@@ -79,6 +86,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Input validation: `indexOf()`/`startsWith()` for origin validation can be bypassed
 - Timing: Secret/token comparison should use constant-time functions
 - Cache poisoning: Security decisions shouldn't be cached asymmetrically
+- For allowlists and URL/origin checks, parse and compare canonical components. Substring, prefix, suffix, or full-URL comparisons are only safe when they exactly match the intended boundary.
 
 ### Concurrency (when applicable)
 
@@ -100,6 +108,9 @@ Before flagging an issue:
 2. Trace data flow to confirm a real trigger path
 3. Check whether the pattern exists elsewhere (may be intentional)
 4. For tests: verify test assumptions match production behavior
+5. For contract/framework findings, report only when the changed code violates a documented or locally enforced contract for the repo's actual version/config, or when callers/tests prove a runtime break.
+6. For async, lifecycle, and atomicity findings, identify the required ordering, shared resource or side effect, and concrete caller/user-visible failure before reporting.
+7. For wrong-identifier findings, require evidence that the two values represent distinct domains at the callee boundary or persistence layer. Similar names alone are not enough.
 
 ## Reporting Gate
 
@@ -127,7 +138,7 @@ Before flagging an issue:
 
 ## Priority Levels
 
-- **[P0]** Blocking -- crash, exploit, data loss
+- **[P0]** Blocking -- crash, exploit,data loss
 - **[P1]** Urgent correctness or security issue
 - **[P2]** Real bug with limited impact
 - **[P3]** Minor but real bug
@@ -184,9 +195,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
