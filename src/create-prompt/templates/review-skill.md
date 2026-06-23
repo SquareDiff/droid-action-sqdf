@@ -33,10 +33,14 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
 - **Concurrency hazards**: TOCTOU, lost updates, unsafe shared state, process/thread lifecycle bugs
+- **Atomic ownership/cache re-checks**: When changed code checks shared state before acquiring the lock, transaction, lease, cache-fill authority, quota write, or consume-once ownership that commits a side effect, verify the state is re-read or revalidated after ownership is acquired. Flag only with a concrete duplicate write, stale cache, exceeded limit, lost update, or cached-error/cached-denial path.
 - **Missing error handling**: For critical operations -- network, persistence, auth, migrations, external APIs
 - **Wrong-variable / shadowing**: Variable name mismatches, contract mismatches (serializer vs validated_data, interface vs abstract method)
 - **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
@@ -51,6 +55,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Check AND vs OR confusion in permission/validation logic
 - Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
 - In loops/transformations, confirm variable names match semantic purpose
+- For each conditional guard on a config/parameter value, verify that valid falsy values (0, empty string, false) are not incorrectly excluded -- distinguish "not provided" from "provided as a falsy value"
 
 ### Null/Undefined Safety
 
@@ -85,6 +90,7 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - Shared state modified without synchronization
 - Double-checked locking that doesn't re-check after acquiring lock
 - Non-atomic read-modify-write on shared counters
+- For caches, quotas, leases, sessions, consume-once tokens, or shared counters, trace the check -> ownership/lock/transaction -> write path. If ownership is acquired after the first check, require a second check before commit; reject generic race claims unless you can name the shared resource, competing callers, broken ordering, and observable effect.
 
 ### API Contract & Breaking Changes
 
@@ -101,29 +107,19 @@ Before flagging an issue:
 3. Check whether the pattern exists elsewhere (may be intentional)
 4. For tests: verify test assumptions match production behavior
 
-## Reporting Gate
+## Approval Gate
 
-### Report if at least one is true
+Report a finding only when it satisfies all of these:
 
-- Definite runtime failure (TypeError, KeyError, ImportError, etc.)
-- Incorrect logic with a clear trigger path and observable wrong result
-- Security vulnerability with a realistic exploit path
-- Data corruption or loss
-- Breaking contract change (API/response/schema/validator) discoverable in code, tests, or docs
+- **Real impact**: Definite runtime failure, incorrect logic, realistic security issue, data loss/corruption, or breaking API/response/schema/validator contract.
+- **Concrete path**: A changed-code trigger reaches observable wrong behavior.
+- **Verified**: Grep/Read/data-flow checks support it, and existing patterns or tests do not contradict it.
+- **Valid anchor**: The comment fits on a changed line without moving the anchor to make the suggestion work.
+- **Not duplicate**: The same root cause is not already reported in this run or existing PR comments.
 
-### Do NOT report
+Reject speculative, defensive, cosmetic, naming-only, or test-hygiene issues unless they cause a real failure. Also reject generic "add guards"/try-catch claims, hypothetical races without a specific concurrent access pattern, and findings about diff-adjacent code outside the PR's changed behavior.
 
-- Test code hygiene (unused vars, setup patterns) unless it causes test failure
-- Defensive "what-if" scenarios without a realistic trigger
-- Cosmetic issues (message text, naming, formatting)
-- Suggestions to "add guards" or "be safer" without a concrete failure path
-
-### Confidence calibration
-
-- **P0**: Virtually certain of a crash or exploit
-- **P1**: High-confidence correctness or security issue
-- **P2**: Plausible bug but cannot fully verify the trigger path from available context
-- Prefer definite bugs over possible bugs. Report possible bugs only with a realistic execution path.
+For P2 findings, reject by default. Approve only if you can independently verify the bug, identify a realistic trigger, and explain the user/caller-visible effect.
 
 ## Priority Levels
 
@@ -142,7 +138,7 @@ Each finding should include:
 - File path and line number
 - Optional: code snippet (<=3 lines) or suggested fix
 
-If you have **high confidence** a fix will address the issue and won't break CI, include a suggestion block:
+If you have high confidence a fix will address the issue and won't break CI, include a suggestion block:
 
 ```suggestion
 <replacement code>
@@ -156,93 +152,28 @@ Suggestion rules:
 
 ## Deduplication
 
-- Never flag the same issue twice (same root cause, even at different locations)
-- If an issue was previously reported and appears fixed, note it as resolved
+Never flag the same issue twice. If multiple candidates share a root cause, keep the best anchor and clearest explanation. If a previously reported issue appears fixed, note it as resolved.
 
 <!-- END_SHARED_METHODOLOGY -->
 
 ## Two-Pass Review Pipeline
 
-The review process uses two passes: candidate generation and validation.
-
 ### Pass 1: Candidate Generation
 
-#### Step 0: Understand the PR intent
-
-1. Read the PR description to understand the purpose and scope of the changes.
-2. If the PR description contains a ticket URL (e.g., Jira, Linear, GitHub issue link) or a ticket ID, **always fetch it** to understand the full requirements and acceptance criteria.
-
-#### Step 1: Triage and group modified files
-
-Before reviewing, triage the PR to enable parallel review:
-
-1. Read the diff to identify ALL modified files
-2. Group files into logical clusters based on:
-   - **Related functionality**: Files in the same module or feature area
-   - **File relationships**: A component and its tests, a class and its interface
-   - **Risk profile**: Security-sensitive files together, database/migration files together
-   - **Dependencies**: Files that import each other or share types
-
-3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
-
-Guidelines for grouping:
-- Aim for 3-6 groups to balance parallelism with context coherence
-- Keep related files together so reviewers have full context
-- Each group should be reviewable independently
-
-#### Step 2: Spawn parallel subagents to review each group
-
-Use the Task tool to spawn parallel `file-group-reviewer` subagents. Each subagent reviews one group of files independently.
-
-**IMPORTANT**: Spawn ALL subagents in a single response to enable parallel execution.
+1. Read the PR description and fetch linked tickets or issue IDs to understand intent and acceptance criteria.
+2. Read the diff and group all modified files into 3-6 coherent clusters by feature/module, file relationship, risk profile, or dependency.
+3. Use the Task tool to spawn all `file-group-reviewer` subagents in a single response. Each subagent reviews one group independently.
 
 For each group, invoke the Task tool with:
 - `subagent_type`: "file-group-reviewer"
 - `description`: Brief label (e.g., "Review auth module")
 - `prompt`: Must include the PR context, the list of assigned files, the relevant diff sections, and instructions to return a JSON array of findings
 
-#### Step 3: Aggregate subagent results
-
-After all subagents complete, collect and merge their findings:
-
-1. **Collect results**: Each subagent returns a JSON array of comment objects
-2. **Merge arrays**: Combine all arrays into a single comments array
-3. **Deduplicate**: If multiple subagents flagged the same location (same path + line), keep only one comment (prefer higher priority: P0 > P1 > P2)
-4. **Filter existing**: Remove any comments that duplicate issues already reported
-5. **Write reviewSummary**: Synthesize a 1-3 sentence overall assessment based on all findings
+4. Merge returned JSON arrays, deduplicate by root cause and best anchor, filter duplicates of existing comments, and write a 1-3 sentence `reviewSummary`.
 
 ### Pass 2: Validation
 
-The validator independently re-examines each candidate against the diff and codebase.
-
-#### Validation rules
-
-Apply the same Reporting Gate as above, plus reject if ANY of these are true:
-
-- It's speculative / "might" without a concrete trigger
-- It's stylistic / naming / formatting
-- It's not anchored to a valid changed line
-- It's already reported (dedupe against existing comments)
-- The anchor (path/side/line/startLine) would need to change to make the suggestion work
-- It flags missing error handling / try-catch for a code path that won't crash in practice
-- It describes a hypothetical race condition without identifying the specific concurrent access pattern
-- It's about code that appears in the diff but is not part of the PR's primary change
-
-#### Confidence-based filtering
-
-- **P0 findings**: Approve if the trigger path checks out. These should be definite crashes/exploits.
-- **P1 findings**: Approve if you can verify the logic error or security issue is real.
-- **P2 findings**: Reject by default. Only approve if ALL of these are true: (1) you can independently verify the bug exists, (2) the bug has a concrete trigger a user or caller could realistically hit, and (3) the finding is NOT about edge cases, defensive coding, or style. When in doubt about a P2, reject it.
-
-#### Strict deduplication
-
-Before approving a candidate:
-1. **Among candidates**: If two or more candidates describe the same underlying bug (same root cause, even if anchored to different lines), approve only the ONE with the best anchor and clearest explanation. Reject the rest with reason "duplicate of candidate N".
-2. **Against existing comments**: If a candidate repeats an issue already covered by an existing PR comment, reject it.
-3. Same file + overlapping line range + same issue = duplicate, even if the body text differs.
+Independently re-check every candidate against the Approval Gate. Approve only concrete, verified P0/P1 issues and rare P2 issues that have a realistic trigger and user/caller-visible effect.
 
 ## Output
 
