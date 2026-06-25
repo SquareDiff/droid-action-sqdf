@@ -22,9 +22,9 @@ Your task is to review code changes and identify high-confidence, actionable bug
 
 ## Review Focus
 
-- Functional correctness, syntax errors, logic bugs
-- Broken dependencies, contracts, or tests
-- Security issues and performance problems
+- Prioritize concrete correctness, security, data-loss, and contract bugs with an observable trigger.
+- Spend attention on changed value flow, changed side effects, changed trust boundaries, and changed async/lifecycle behavior.
+- Ignore generic cleanup, style, and defensive suggestions unless they create a real runtime failure.
 
 ## Bug Patterns
 
@@ -32,65 +32,22 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
-- **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
-- **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
-- **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
-- **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
-- **Concurrency hazards**: TOCTOU, lost updates, unsafe shared state, process/thread lifecycle bugs
-- **Missing error handling**: For critical operations -- network, persistence, auth, migrations, external APIs
-- **Wrong-variable / shadowing**: Variable name mismatches, contract mismatches (serializer vs validated_data, interface vs abstract method)
-- **Type-assumption bugs**: Numeric ops on datetime/strings, ordering-key type mismatches, comparison of object references instead of values
-- **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
-- **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
+- **Value-domain preservation**: Valid falsy or empty values (`0`, `0.0`, `''`, `false`, `[]`) must not be treated as absent. Check truthy guards, fallback/default operators, config merges, sentinel handling, equality/coercion, and boundary serialization where "missing" and "present but zero/empty/false" have different behavior.
+- **Async side-effect loss**: `forEach`/`map`/`filter` with async callbacks, missing `await`, fire-and-forget promise chains, or swallowed rejections are bugs when the caller depends on completion, ordering, persistence, cleanup, or returned values.
+- **Wrong semantic slot**: Wrong-variable, shadowing, serializer-vs-validated-data, interface-vs-implementation, caller/callee shape mismatch, or near-name field confusion. Report only when the changed value reaches a different consumer-visible slot or contract.
+- **Boundary and trust decisions**: Auth, CSRF/OAuth state, SSRF, XSS, SQL/command/template injection, URL/origin/domain validation, and cache poisoning. Report only with a realistic attacker or untrusted-input path and a concrete bypass or wrong trust decision.
+- **State and lifecycle integrity**: Lost updates, unsafe shared state, TOCTOU, cursor/offset mistakes, commit semantics, resource leaks, and missing cleanup/error handling for critical network, persistence, auth, migration, or external API operations.
+- **Runtime contracts and type assumptions**: Changed serializers, schemas, function signatures, framework hooks, datetime/string/numeric operations, object-reference comparisons, and response shapes must match actual callers, tests, docs, or runtime semantics.
 
 ## Systematic Analysis Patterns
 
-### Logic & Variable Usage
+Use this compact tracing loop instead of expanding every generic checklist:
 
-- Verify correct variable in each conditional clause
-- Check AND vs OR confusion in permission/validation logic
-- Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
-- In loops/transformations, confirm variable names match semantic purpose
-
-### Null/Undefined Safety
-
-- For each property access chain (`a.b.c`), verify no intermediate can be null/undefined
-- When Optional types are unwrapped, verify presence is checked first
-- Pay attention to: auth contexts, optional relationships, map/dict lookups, config values
-
-### Type Compatibility & Data Flow
-
-- Trace types flowing into math operations (floor/ceil on datetime = error)
-- Verify comparison operators match types (object reference vs value equality)
-- Check function parameters receive expected types after transformations
-- Verify type consistency across serialization/deserialization boundaries
-
-### Async/Await (JavaScript/TypeScript)
-
-- Flag `forEach`/`map`/`filter` with async callbacks -- these don't await
-- Verify all async calls are awaited when their result or side-effect is needed
-- Check promise chains have proper error handling
-
-### Security
-
-- SSRF: Flag unvalidated URL fetching with user input
-- XSS: Check for unescaped user input in HTML/template contexts
-- Auth/session: OAuth state must be per-request random; CSRF tokens must be verified
-- Input validation: `indexOf()`/`startsWith()` for origin validation can be bypassed
-- Timing: Secret/token comparison should use constant-time functions
-- Cache poisoning: Security decisions shouldn't be cached asymmetrically
-
-### Concurrency (when applicable)
-
-- Shared state modified without synchronization
-- Double-checked locking that doesn't re-check after acquiring lock
-- Non-atomic read-modify-write on shared counters
-
-### API Contract & Breaking Changes
-
-- When serializers/validators change: verify response structure remains compatible
-- When DB schemas change: verify migrations include data backfill
-- When function signatures change: grep for all callers to verify compatibility
+1. Identify what the PR changed: inputs, branch conditions, state writes, async work, side effects, external calls, and returned/serialized values.
+2. For changed values, preserve the domain distinction through guards, defaults, merges, normalization, serialization, persistence, and later reads.
+3. For changed side effects, verify ordering and completion: the operation that callers rely on must actually run, await, persist, clean up, or report failure.
+4. For changed boundaries, verify the producer and consumer agree on type, shape, trust boundary, and caller-visible contract.
+5. Activate only the relevant bug lenses. Do not spend review attention on a pattern unless the diff contains the matching value flow, boundary, or side effect.
 
 ## Analysis Discipline
 
@@ -127,7 +84,7 @@ Before flagging an issue:
 
 ## Priority Levels
 
-- **[P0]** Blocking -- crash, exploit, data loss
+- **[P0]** Blocking -- crash, exploit,data loss
 - **[P1]** Urgent correctness or security issue
 - **[P2]** Real bug with limited impact
 - **[P3]** Minor but real bug
@@ -184,9 +141,9 @@ Before reviewing, triage the PR to enable parallel review:
    - **Dependencies**: Files that import each other or share types
 
 3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
+   - Group 1 (Auth): auth entrypoint, session manager, related auth tests
+   - Group 2 (API handlers): user endpoint, order endpoint
+   - Group 3 (Database): schema migration, database schema definition
 
 Guidelines for grouping:
 - Aim for 3-6 groups to balance parallelism with context coherence
