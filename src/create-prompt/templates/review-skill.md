@@ -33,6 +33,9 @@ Only flag issues you are confident about -- avoid speculative or stylistic nitpi
 High-signal patterns to actively check (only comment when evidenced in the diff):
 
 - **Null/undefined safety**: Dereferences on Optional types, missing-key errors on untrusted JSON payloads, unchecked `.find()` / `array[0]` / `.get()` results
+- **Truthiness traps**: Valid falsy values (`0`, `0.0`, `''`, `false`, `[]`) silently skipped by `if (value)`, `value || default`, `value ?? fallback` (only nullish), or ternary guards. A config parameter set to zero or an empty string is a legitimate value -- not an absence signal. Flag when a truthy check discards a valid domain value.
+- **Sentinel-value confusion**: Using null/undefined as "not set" when the domain legitimately includes falsy values. Check that "missing" vs "present but zero/empty" are distinguishable in the data model and that branching logic does not conflate them.
+- **Loose equality coercion**: `==` comparisons (or language equivalents) that silently coerce types in unexpected ways -- e.g., `0 == ''`, `null == undefined`, `[] == false`. Flag when strict equality or explicit type checks would prevent a silent misclassification.
 - **Resource leaks**: Unclosed files, streams, connections; missing cleanup on error paths
 - **Injection vulnerabilities**: SQL injection, XSS, command/template injection, auth/security invariant violations
 - **OAuth/CSRF invariants**: State must be per-flow unpredictable and validated; flag deterministic or missing state checks
@@ -43,54 +46,18 @@ High-signal patterns to actively check (only comment when evidenced in the diff)
 - **Offset/cursor/pagination mismatches**: Off-by-one, prev/next behavior, commit semantics
 - **Async/await pitfalls**: `forEach`/`map`/`filter` with async callbacks (fire-and-forget), missing `await` on operations whose side-effects or return values are needed, unhandled promise rejections
 
-## Systematic Analysis Patterns
+## Focused Review Checks
 
-### Logic & Variable Usage
+Use these checks to keep the review concrete without expanding into a broad
+detector catalog:
 
-- Verify correct variable in each conditional clause
-- Check AND vs OR confusion in permission/validation logic
-- Verify return statements return the intended value (not wrapper objects, intermediate variables, or wrong properties)
-- In loops/transformations, confirm variable names match semantic purpose
-
-### Null/Undefined Safety
-
-- For each property access chain (`a.b.c`), verify no intermediate can be null/undefined
-- When Optional types are unwrapped, verify presence is checked first
-- Pay attention to: auth contexts, optional relationships, map/dict lookups, config values
-
-### Type Compatibility & Data Flow
-
-- Trace types flowing into math operations (floor/ceil on datetime = error)
-- Verify comparison operators match types (object reference vs value equality)
-- Check function parameters receive expected types after transformations
-- Verify type consistency across serialization/deserialization boundaries
-
-### Async/Await (JavaScript/TypeScript)
-
-- Flag `forEach`/`map`/`filter` with async callbacks -- these don't await
-- Verify all async calls are awaited when their result or side-effect is needed
-- Check promise chains have proper error handling
-
-### Security
-
-- SSRF: Flag unvalidated URL fetching with user input
-- XSS: Check for unescaped user input in HTML/template contexts
-- Auth/session: OAuth state must be per-request random; CSRF tokens must be verified
-- Input validation: `indexOf()`/`startsWith()` for origin validation can be bypassed
-- Timing: Secret/token comparison should use constant-time functions
-- Cache poisoning: Security decisions shouldn't be cached asymmetrically
-
-### Concurrency (when applicable)
-
-- Shared state modified without synchronization
-- Double-checked locking that doesn't re-check after acquiring lock
-- Non-atomic read-modify-write on shared counters
-
-### API Contract & Breaking Changes
-
-- When serializers/validators change: verify response structure remains compatible
-- When DB schemas change: verify migrations include data backfill
-- When function signatures change: grep for all callers to verify compatibility
+- Verify the correct variable and boolean operator in each changed condition.
+- Trace changed inputs through branches, state mutations, side effects, and outputs.
+- For property access, optional values, map/dict lookups, and config values, verify the changed code checks presence before use.
+- For changed numeric, datetime, string, and object comparisons, verify the operation matches the actual runtime type and intended equality semantics.
+- For serializers, validators, schemas, function signatures, and framework callbacks, verify callers still receive the documented or locally enforced contract.
+- For async changes, verify side effects and return values are awaited when callers depend on them.
+- For security-sensitive changes, verify user-controlled data cannot cross trust boundaries without the expected validation, escaping, authorization, or CSRF/state checks.
 
 ## Analysis Discipline
 
@@ -127,7 +94,7 @@ Before flagging an issue:
 
 ## Priority Levels
 
-- **[P0]** Blocking -- crash, exploit, data loss
+- **[P0]** Blocking -- crash, exploit,data loss
 - **[P1]** Urgent correctness or security issue
 - **[P2]** Real bug with limited impact
 - **[P3]** Minor but real bug
@@ -163,56 +130,17 @@ Suggestion rules:
 
 ## Two-Pass Review Pipeline
 
-The review process uses two passes: candidate generation and validation.
+The review process uses two passes.
 
 ### Pass 1: Candidate Generation
 
-#### Step 0: Understand the PR intent
-
-1. Read the PR description to understand the purpose and scope of the changes.
-2. If the PR description contains a ticket URL (e.g., Jira, Linear, GitHub issue link) or a ticket ID, **always fetch it** to understand the full requirements and acceptance criteria.
-
-#### Step 1: Triage and group modified files
-
-Before reviewing, triage the PR to enable parallel review:
-
-1. Read the diff to identify ALL modified files
-2. Group files into logical clusters based on:
-   - **Related functionality**: Files in the same module or feature area
-   - **File relationships**: A component and its tests, a class and its interface
-   - **Risk profile**: Security-sensitive files together, database/migration files together
-   - **Dependencies**: Files that import each other or share types
-
-3. Document your grouping briefly, for example:
-   - Group 1 (Auth): src/auth/login.ts, src/auth/session.ts, tests/auth.test.ts
-   - Group 2 (API handlers): src/api/users.ts, src/api/orders.ts
-   - Group 3 (Database): src/db/migrations/001.ts, src/db/schema.ts
-
-Guidelines for grouping:
-- Aim for 3-6 groups to balance parallelism with context coherence
-- Keep related files together so reviewers have full context
-- Each group should be reviewable independently
-
-#### Step 2: Spawn parallel subagents to review each group
-
-Use the Task tool to spawn parallel `file-group-reviewer` subagents. Each subagent reviews one group of files independently.
-
-**IMPORTANT**: Spawn ALL subagents in a single response to enable parallel execution.
-
-For each group, invoke the Task tool with:
-- `subagent_type`: "file-group-reviewer"
-- `description`: Brief label (e.g., "Review auth module")
-- `prompt`: Must include the PR context, the list of assigned files, the relevant diff sections, and instructions to return a JSON array of findings
-
-#### Step 3: Aggregate subagent results
-
-After all subagents complete, collect and merge their findings:
-
-1. **Collect results**: Each subagent returns a JSON array of comment objects
-2. **Merge arrays**: Combine all arrays into a single comments array
-3. **Deduplicate**: If multiple subagents flagged the same location (same path + line), keep only one comment (prefer higher priority: P0 > P1 > P2)
-4. **Filter existing**: Remove any comments that duplicate issues already reported
-5. **Write reviewSummary**: Synthesize a 1-3 sentence overall assessment based on all findings
+1. Read the PR description and linked ticket when available.
+2. Read the full diff and group changed files into coherent review clusters.
+3. Spawn parallel `file-group-reviewer` subagents in one response, giving each
+   subagent the PR context, assigned files, relevant diff sections, and
+   instructions to return a JSON array of findings.
+4. Merge returned findings, deduplicate by root cause, filter existing comments,
+   and write a 1-3 sentence `reviewSummary`.
 
 ### Pass 2: Validation
 
