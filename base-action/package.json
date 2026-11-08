@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@actions/core": "^1.10.1",
-    "shell-quote": "^1.8.3"
+    "shell-quote": "^1.9.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.12",
@@ -19,5 +19,9 @@
     "@types/shell-quote": "^1.7.5",
     "prettier": "3.5.3",
     "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "undici": "^6.29.1",
+    "@fastify/busboy": "^3.2.1"
   }
 }

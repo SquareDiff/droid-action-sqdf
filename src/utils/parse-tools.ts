@@ -39,7 +39,6 @@ export function normalizeDroidArgs(args: string): string {
       .replace(/--allowed-tools/g, "--enabled-tools")
       .replace(/--enabledTools/g, "--enabled-tools")
       .replace(/--disallowedTools/g, "--disabled-tools")
-      .replace(/--disabled-tools/g, "--disabled-tools")
       .replace(/--disallowed-tools/g, "--disabled-tools")
       // Strip unsupported MCP inline config flags to avoid CLI errors
       .replace(/--mcp-config\s+(?:"[^"]*"|'[^']*'|[^\s]+)/g, "")
