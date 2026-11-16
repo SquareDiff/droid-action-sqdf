@@ -52,12 +52,12 @@ export function normalizeHtmlEntities(content: string): string {
 }
 
 export function sanitizeContent(content: string): string {
-  content = stripHtmlComments(content);
   content = stripInvisibleCharacters(content);
+  content = normalizeHtmlEntities(content);
   content = stripMarkdownImageAltText(content);
   content = stripMarkdownLinkTitles(content);
   content = stripHiddenAttributes(content);
-  content = normalizeHtmlEntities(content);
+  content = stripHtmlComments(content);
   content = redactGitHubTokens(content);
   return content;
 }
@@ -96,5 +96,31 @@ export function redactGitHubTokens(content: string): string {
   return content;
 }
 
-export const stripHtmlComments = (content: string) =>
-  content.replace(/<!--[\s\S]*?-->/g, "");
+export function stripHtmlComments(content: string): string {
+  // Check the output too: deleting a comment can join its neighbors into a
+  // new opener. A character stack handles this in one pass without rescans.
+  const output: string[] = [];
+  let inComment = false;
+  for (let index = 0; index < content.length; index++) {
+    if (inComment) {
+      if (content.startsWith("-->", index)) {
+        inComment = false;
+        index += 2;
+      }
+      continue;
+    }
+    output.push(content[index]!);
+    const length = output.length;
+    if (
+      length >= 4 &&
+      output[length - 4] === "<" &&
+      output[length - 3] === "!" &&
+      output[length - 2] === "-" &&
+      output[length - 1] === "-"
+    ) {
+      output.length -= 4;
+      inComment = true;
+    }
+  }
+  return output.join("");
+}

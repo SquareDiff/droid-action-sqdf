@@ -361,3 +361,29 @@ describe("stripHtmlComments (legacy)", () => {
     );
   });
 });
+
+describe("HTML comment sanitization regressions", () => {
+  it("removes comments formed when an inner comment is deleted", () => {
+    expect(stripHtmlComments("safe <!<!--inner-->--hidden--> text")).toBe(
+      "safe  text",
+    );
+  });
+
+  it("removes unterminated hidden content", () => {
+    expect(stripHtmlComments("safe <!--hidden")).toBe("safe ");
+  });
+
+  it("strips comments revealed by entity and invisible-character normalization", () => {
+    expect(sanitizeContent("safe &#60;!--hidden--&#62; text")).toBe(
+      "safe  text",
+    );
+    expect(sanitizeContent("safe <!\u200B--hidden--> text")).toBe("safe  text");
+  });
+});
+
+it("strips deeply reassembled comment openers without recursive rescans", () => {
+  const depth = 10000;
+  const nested =
+    "<!".repeat(depth) + "<!--hidden-->" + "--hidden-->".repeat(depth);
+  expect(stripHtmlComments(nested)).toBe("");
+});
